@@ -15,7 +15,7 @@ Import tools into USER namespace.
 
 Run the Help method to see all entry points. All commands are run in USER.
 
-    USER> do ##class(PerfTools.RanRead).Help()
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanRead).Help()</pre>
 
 do ##class(PerfTools.RanRead).Setup(Directory,DatabaseName,SizeGB,LogLevel)
  - Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is "none" and 3 is "verbose".
@@ -30,7 +30,7 @@ do ##class(PerfTools.RanRead).Purge(Directory)
 do ##class(PerfTools.RanRead).Export(Directory)
  - Exports a summary of all random read test history to comma delimited text file.
 
-    USER> do ##class(PerfTools.RanWrite).Help()
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);"> USER> do ##class(PerfTools.RanWrite).Help()</pre>
 
 do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName)
  - Creates database and namespace with the same name.
