@@ -127,9 +127,9 @@ In order to acquire the simple results for each run that are saved in USER in SQ
 
 To export the result set to a comma delimited text file (csv) run the following:
 
-<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanRead).Export("/usr/iris/db/zranread/")</pre>
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanRead).Export("/ISC/tests/TMP/ ")</pre>
 
-Exporting summary of all random read statistics to /usr/iris/db/zranread/PerfToolsRanRead_20221023-1408.txt  
+Exporting summary of all random read statistics to /ISC/tests/TMP/PerfToolsRanRead_20221023-1408.txt  
 Done.
 
 ### Analysis
