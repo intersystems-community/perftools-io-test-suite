@@ -152,7 +152,7 @@ Then run that profile (from %SYS) and immediately switch back to USER and start 
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> job ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",1,60,.001)</pre>
 
-One can then wait for the SystemPerformance job to end, and analyze the resultant html file using tools such as [yaspe](https://community.intersystems.com/post/unpacking-pbuttons-yape-update-notes-and-quick-guides).
+One can then wait for the SystemPerformance job to end, and analyze the resultant html file using tools such as [yaspe](https://github.com/murrayo/yaspe).
 
 ### Clean Up
 
