@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2021.1.0L (Build 114U)" ts="2022-10-20 17:21:25">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-03-20 18:41:48">
 <Class name="PerfTools.RanWrite">
 <Description><![CDATA[
 Random write test
@@ -14,7 +14,7 @@ After 30 minutes test the ranwrite DB was about 3GB.
 
 ranwrite uses very little CPU (<1%) so could be run with RANREAD for a r/w smoke test. Adjust the pacing for the expected load.]]></Description>
 <Super>%Persistent</Super>
-<TimeChanged>66402,62359.388356</TimeChanged>
+<TimeChanged>66553,65689.097939764</TimeChanged>
 <TimeCreated>65488,66744.147036</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -374,7 +374,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 			for i=1:1:pProcesses {
 				//Job off separate processes to perform random read test
 			    job ..RanWriteJob(date,time,batch,namespace,pProcesses,pDurationSecs,pHang,pRandom,pNodeLength,pNodeDepth,pSubnodeLength,i)
-				w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB										
+				//w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB										
 			}
 				
 			write !,"Starting "_pProcesses_" processes for RanWrite job number ",$JOB," now!"

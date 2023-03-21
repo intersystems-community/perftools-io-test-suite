@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2021.1.0L (Build 114U)" ts="2022-10-20 17:21:10">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-03-20 18:41:39">
 <Class name="PerfTools.RanRead">
 <Description>
 This IRIS Data Platform tool persists random read storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanRead).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>66402,62379.465877</TimeChanged>
+<TimeChanged>66553,64027.662399967</TimeChanged>
 <TimeCreated>64054,57617.929379</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -157,7 +157,7 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 			for i=1:1:pProcesses {
 				//Job off separate processes to perform random read test
 				job ..RanReadJob(date,startTime,batch,directory,pProcesses,pCount,pMode,maxBlock,i)
-				w !,"  Prepped RanReadJob ",$ZCHILD," for parent ",$JOB										
+				//w !,"  Prepped RanReadJob ",$ZCHILD," for parent ",$JOB										
 			}
 				
 			write !,"Starting "_pProcesses_" processes for RanRead job number ",$JOB," now!"
