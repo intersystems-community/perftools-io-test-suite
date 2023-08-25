@@ -40,21 +40,21 @@ Exports a summary of all random read test history to comma delimited text file.
  - do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName)  
 Creates database and namespace with the same name.  
 
- - do ##class(PerfTools.RanWrite).CreateGlobals(Directory,NumGlobals,NumSubscripts)
+ - do ##class(PerfTools.RanWrite).CreateGlobals(Directory,NumGlobals,NumSubscripts)  
 Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1,
 ^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each.
 
- - do ##class(PerfTools.RanWrite).AddGlobals(Directory,NumGlobals,NumSubscripts)
+ - do ##class(PerfTools.RanWrite).AddGlobals(Directory,NumGlobals,NumSubscripts)  
 Creates more Globals if needed after the initial creation is done.
 NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1
 
- - do ##class(PerfTools.RanWrite).CountSubscripts(Directory)
+ - do ##class(PerfTools.RanWrite).CountSubscripts(Directory)  
 Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory.
 
- - do ##class(PerfTools.RanWrite).GetSizes(Directory)
+ - do ##class(PerfTools.RanWrite).GetSizes(Directory)  
 Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory.
 
- - do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms))  
+ - do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms))    
 Run the random write IO test. All parameters other than the directory have defaults.  
 
  - do ##class(PerfTools.RanWrite).Stop()  
@@ -88,32 +88,32 @@ Starting global creation
 .............
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).CountSubscripts("/ISC/tests/TMP")</pre>       
-Number of Globals is: 10
-Number of subscripts in ^RanWriteGlobal1 is: 1000000
-Number of subscripts in ^RanWriteGlobal2 is: 1000000
-Number of subscripts in ^RanWriteGlobal3 is: 1000000
-Number of subscripts in ^RanWriteGlobal4 is: 1000000
-Number of subscripts in ^RanWriteGlobal5 is: 1000000
-Number of subscripts in ^RanWriteGlobal6 is: 1000000
-Number of subscripts in ^RanWriteGlobal7 is: 1000000
-Number of subscripts in ^RanWriteGlobal8 is: 1000000
-Number of subscripts in ^RanWriteGlobal9 is: 1000000
-Number of subscripts in ^RanWriteGlobal10 is: 1000000
-Number of subscripts in all globals is: 10000000
+Number of Globals is: 10  
+Number of subscripts in ^RanWriteGlobal1 is: 1000000  
+Number of subscripts in ^RanWriteGlobal2 is: 1000000  
+Number of subscripts in ^RanWriteGlobal3 is: 1000000  
+Number of subscripts in ^RanWriteGlobal4 is: 1000000  
+Number of subscripts in ^RanWriteGlobal5 is: 1000000  
+Number of subscripts in ^RanWriteGlobal6 is: 1000000  
+Number of subscripts in ^RanWriteGlobal7 is: 1000000  
+Number of subscripts in ^RanWriteGlobal8 is: 1000000  
+Number of subscripts in ^RanWriteGlobal9 is: 1000000  
+Number of subscripts in ^RanWriteGlobal10 is: 1000000  
+Number of subscripts in all globals is: 10000000  
 
 NOTE: The more subscripts each Global has, the lower the chance that there will be double writing to the same block during a given Write Daemon cycle, resulting in more "dirty" blocks. This is what drives the performance measurement. Also, the CountSubscripts function walks the entire tree to count subscripts directly, which can take a great deal of time if the Globals are large. If you simply want a count of what was created based upon the "Size" parameter in each created Global, you can run GetSizes, which looks like this:
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).GetSizes("/ISC/tests/TMP")</pre>    
 
-10,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000
+10,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000  
 
 Finally, if you create X Globals initially, and later decide you want to run X+Y processes, you can add to the existing Globals without re-creating them by using the AddGlobals function:
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).AddGlobals("/ISC/tests/TMP",12)</pre>       
-Filling 2 new Globals, starting with number 11
-Number of subscripts is 1000000
-Starting global creation
-....
+Filling 2 new Globals, starting with number 11  
+Number of subscripts is 1000000  
+Starting global creation  
+....  
 
 ### Methodology
 
@@ -151,15 +151,15 @@ For RanWrite, each process attaches to a single ^RanWriteGlobal and writes multi
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,60,50,2))</pre>
 
-Number of Globals is: 12
-Total number of subscripts in all globals is: 600000
-RanWrite process 1424 creating 10 worker processes in the background.
-Starting 10 processes for RanWrite job number 1424 now!
-To terminate run:  do ##class(PerfTools.RanWrite).Stop()
-Waiting to finish...............................................................
-Random write background jobs finished for parent 1424
-RanWrite job 1424's 10 processes (60 seconds) had average response time = .0545ms
-Calculated IOPS for RanWrite job 1424 = 183414
+Number of Globals is: 12  
+Total number of subscripts in all globals is: 600000  
+RanWrite process 1424 creating 10 worker processes in the background.  
+Starting 10 processes for RanWrite job number 1424 now!  
+To terminate run:  do ##class(PerfTools.RanWrite).Stop()  
+Waiting to finish...............................................................  
+Random write background jobs finished for parent 1424  
+RanWrite job 1424's 10 processes (60 seconds) had average response time = .0545ms  
+Calculated IOPS for RanWrite job 1424 = 183414  
  
 In order to run RanRead and RanWrite together, instead of "do", use the "job" command for both of them to run them in the background.
 
