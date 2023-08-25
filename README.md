@@ -20,8 +20,8 @@ Run the Help method to see all entry points. All commands are run in USER.
  - do ##class(PerfTools.RanRead).Setup(Directory,DatabaseName,SizeGB,LogLevel)  
 Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is "none" and 3 is "verbose".  
 
- - do ##class(PerfTools.RanRead).Run(Directory,Processes,Count,Mode)  
-Run the random read IO test. Mode is 1 (default) for time in seconds, 2 for iterations, referring to the prior Count parameter  
+ - do ##class(PerfTools.RanRead).Run(Directory,Processes,RunTime in seconds)  
+Run the random read IO test. 
 
  - do ##class(PerfTools.RanRead).Stop()  
 Terminates all background jobs.  
@@ -40,7 +40,21 @@ Exports a summary of all random read test history to comma delimited text file.
  - do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName)  
 Creates database and namespace with the same name.  
 
- - do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime,HangTime,HangVariationPct,Global name length,Global node depth,Global subnode length)  
+ - do ##class(PerfTools.RanWrite).CreateGlobals(Directory,NumGlobals,NumSubscripts)
+Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1,
+^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each.
+
+ - do ##class(PerfTools.RanWrite).AddGlobals(Directory,NumGlobals,NumSubscripts)
+Creates more Globals if needed after the initial creation is done.
+NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1
+
+ - do ##class(PerfTools.RanWrite).CountSubscripts(Directory)
+Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory.
+
+ - do ##class(PerfTools.RanWrite).GetSizes(Directory)
+Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory.
+
+ - do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms))  
 Run the random write IO test. All parameters other than the directory have defaults.  
 
  - do ##class(PerfTools.RanWrite).Stop()  
@@ -67,11 +81,45 @@ Database created in /ISC/tests/TMP/
 
 NOTE: One can use the same database for both RanRead and RanWrite, or use separate ones if intending to test multiple disks at once or for specific purposes. The RanRead code allows one to specify the size of the database, but the RanWrite code does not, so it's probably best to use the RanRead Setup command for creating any pre-sized databases desired even if one will use the database with RanWrite.
 
+After the directory is created, RanRead can be run immediately, but if you wish to run RanWrite you must first pre-create the Globals it will use. The number of Globals should equal or exceed the number of processes you wish to run with RanWrite. 
+
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).CreateGlobals("/ISC/tests/TMP",10,1000000)</pre>              
+Starting global creation
+.............
+
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).CountSubscripts("/ISC/tests/TMP")</pre>       
+Number of Globals is: 10
+Number of subscripts in ^RanWriteGlobal1 is: 1000000
+Number of subscripts in ^RanWriteGlobal2 is: 1000000
+Number of subscripts in ^RanWriteGlobal3 is: 1000000
+Number of subscripts in ^RanWriteGlobal4 is: 1000000
+Number of subscripts in ^RanWriteGlobal5 is: 1000000
+Number of subscripts in ^RanWriteGlobal6 is: 1000000
+Number of subscripts in ^RanWriteGlobal7 is: 1000000
+Number of subscripts in ^RanWriteGlobal8 is: 1000000
+Number of subscripts in ^RanWriteGlobal9 is: 1000000
+Number of subscripts in ^RanWriteGlobal10 is: 1000000
+Number of subscripts in all globals is: 10000000
+
+NOTE: The more subscripts each Global has, the lower the chance that there will be double writing to the same block during a given Write Daemon cycle, resulting in more "dirty" blocks. This is what drives the performance measurement. Also, the CountSubscripts function walks the entire tree to count subscripts directly, which can take a great deal of time if the Globals are large. If you simply want a count of what was created based upon the "Size" parameter in each created Global, you can run GetSizes, which looks like this:
+
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).GetSizes("/ISC/tests/TMP")</pre>    
+
+10,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000,1000000
+
+Finally, if you create X Globals initially, and later decide you want to run X+Y processes, you can add to the existing Globals without re-creating them by using the AddGlobals function:
+
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).AddGlobals("/ISC/tests/TMP",12)</pre>       
+Filling 2 new Globals, starting with number 11
+Number of subscripts is 1000000
+Starting global creation
+....
+
 ### Methodology
 
-Start with a small number of processes and 30-60 second run times. Then increase the number of processes, e.g. start at 10 jobs and increase by 10, 20, 40 etc. Continue running the individual tests until response time is consistently over 10ms or calculated IOPS is no longer increasing in a linear way. 
+Start with a small number of RanRead processes and 30-60 second run times. Then increase the number of processes, e.g. start at 10 jobs and increase by 10, 20, 40 etc. Continue running the individual tests until response time is consistently over 10ms or calculated IOPS is no longer increasing in a linear way. 
 
-The tool uses the ObjectScript VIEW command which reads database blocks in memory so if you are not getting your expected results then perhaps all the database blocks are already in memory.
+The RanRead tool uses the ObjectScript VIEW command which reads database blocks in memory so if you are not getting your expected results then perhaps all the database blocks are already in memory.
 
 As a guide, the following response times for 8KB and 64KB Database Random Reads (non-cached) are usually acceptable for all-flash arrays:
 
@@ -99,25 +147,19 @@ Random read background jobs finished for parent 11742
 RanRead job 11742's 5 processes (62.856814 seconds) average response time = 1.23ms  
 Calculated IOPS for RanRead job 11742 = 4065  
 
-The Mode parameter for the Run command defaults to mode 1, which uses the Count parameter (60 in the above example) as seconds. Setting Mode to 2 will read the Count parameter as a number of iterations per process, so if it's set to 100,000 each of the 5 jobs would read from the database 100,000 times. That is the mode originally used by this software, but the timed runs allow for more precise coordination with monitoring tools such as System Performance, which are also timed, and the RanWrite tool.
+For RanWrite, each process attaches to a single ^RanWriteGlobal and writes multiple transactions to that Global and only that Global. The transaction length parameter is how many writes are performed by each job during each cycle, while the Hangtime parameter is the delay between transactions in milliseconds. In other words, if you have a transaction length of 50 and a hangtime of 2, each process will write 50 times as quickly as possible into its associated ^RanWriteGlobal, and then pause for 2 milliseconds, then repeat. Execute the Run method decreasing the Hangtime parameter and/or increasing the number of jobs. Those parameters are the primary drivers of IOPS for RanWrite. O
 
-For RanWrite, execute the Run method decreasing the Hangtime parameter. That parameter indicates the wait time between writes in seconds, and is the primary driver of IOPS for RanWrite. One can also increase the number of processes as a driver for IOPS.
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,60,50,2))</pre>
 
-<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",1,60,.001)</pre>
-
-RanWrite process 11742 creating 1 worker processes in the background.  
-&nbsp;&nbsp;Prepped RanWriteJob 12100 for parent 11742  
-Starting 1 processes for RanWrite job number 11742 now!  
-To terminate run:  do ##class(PerfTools.RanWrite).Stop()  
-Waiting to finish...............................................................  
-Random write background jobs finished for parent 11742  
-RanWrite job 11742's 1 processes (60 seconds) had average response time = .912ms  
-Calculated IOPS for RanWrite job 11742 = 1096  
-
-The other parameters for RanWrite can usually be left at their default values outside of unusual circumstances. Those parameters are:
- - HangVariationPct: The variance on the hangtime parameter, used to mimic uncertainty; it's a percentage of the prior parameter
-  - Global name length: RanWrite randomly chooses a Global name, and this is the length of that name. E.g. if it's set to 6, the Global may look like Xr6opg
-  - Global node depth and Global subnode length: The top Global is not the one that's filled. What's actually filled is sub-nodes, so setting these values to 2 and 4 would result in a command like "set ^Xr6opg("drb7","xt8v") = [value]". The purpose of these two parameters and the Global name length are all to ensure that the same global isn't being set over and over, which would result in minimal IO events
+Number of Globals is: 12
+Total number of subscripts in all globals is: 600000
+RanWrite process 1424 creating 10 worker processes in the background.
+Starting 10 processes for RanWrite job number 1424 now!
+To terminate run:  do ##class(PerfTools.RanWrite).Stop()
+Waiting to finish...............................................................
+Random write background jobs finished for parent 1424
+RanWrite job 1424's 10 processes (60 seconds) had average response time = .0545ms
+Calculated IOPS for RanWrite job 1424 = 183414
  
 In order to run RanRead and RanWrite together, instead of "do", use the "job" command for both of them to run them in the background.
 

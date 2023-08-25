@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-03-20 18:41:39">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-07-10 18:21:14">
 <Class name="PerfTools.RanRead">
 <Description>
 This IRIS Data Platform tool persists random read storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanRead).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>66553,64027.662399967</TimeChanged>
+<TimeChanged>66651,59531.951612847</TimeChanged>
 <TimeCreated>64054,57617.929379</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -26,7 +26,7 @@ For more info run:  do ##class(PerfTools.RanRead).Help()</Description>
 </Parameter>
 
 <Parameter name="TIMEDECIMAL">
-<Default>3</Default>
+<Default>4</Default>
 </Parameter>
 
 <Property name="RunDate">
@@ -73,6 +73,12 @@ Number of iterations</Description>
 <Type>%Integer</Type>
 </Property>
 
+<Property name="ProcTime">
+<Description>
+Worker job runtime</Description>
+<Type>%Time</Type>
+</Property>
+
 <Property name="ResponseTime">
 <Description>
 Response Time in milliseconds</Description>
@@ -81,7 +87,7 @@ Response Time in milliseconds</Description>
 
 <Property name="IOPS">
 <Description>
-Calculated IOPS (1000ms / Processes * Response Time)</Description>
+Calculated IOPS </Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -93,16 +99,15 @@ Display help</Description>
 	#dim str as %String
 	
 	// write display title
-	do ..DisplayTitle()
 	set str=" - "
 	write !,"do ##class(PerfTools.RanRead).Setup(Directory,DatabaseName,SizeGB,LogLevel)"
 	write !,str_"Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
-	write !,"do ##class(PerfTools.RanRead).Run(Directory,Processes,Count,Mode)"
-	write !,str_"Run the random read IO test. Mode is 1 (default) for time in seconds, 2 for iterations, referring to the prior Count parameter"
+	write !,"do ##class(PerfTools.RanRead).Run(Directory,Processes,RunTime in seconds)"
+	write !,str_"Run the random read IO test."
 	write !,"do ##class(PerfTools.RanRead).Stop()"
 	write !,str_"Terminates all background jobs."
 	write !,"do ##class(PerfTools.RanRead).Reset()"
-	write !,str_"Deletes statistics of prior runs. This is important to run between tests because otherwise statistics of prior runs are averaged into the current one."
+	write !,str_"Deletes statistics of prior runs."
 	write !,"do ##class(PerfTools.RanRead).Purge(Directory)"
 	write !,str_"Deletes namespace and database of the same name."
 	write !,"do ##class(PerfTools.RanRead).Export(Directory)"
@@ -115,7 +120,7 @@ Display help</Description>
 Run random read test. 
 Prompt user for database path, processes and iterations if not passed in.</Description>
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pCount:%Integer=300,pMode:%Integer=1</FormalSpec>
+<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300</FormalSpec>
 <Implementation><![CDATA[
 	
 	#dim tSC as %Status = $$$OK
@@ -124,20 +129,12 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 	#dim i,batch,maxBlock,currentJobs,IOPS as %Integer
 	#dim respTime as %Double
 	
-	if (pMode < 1 || pMode > 2) {
-		write !, "Mode parameter outside of expected range."
-		quit
-	}
-
 	try {
 		//Normalize directory
 		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
 
 		//Check if database exists
 		if ..IsValidDatabaseDir(directory)  {
-			
-			// write display title
-			do ..DisplayTitle()
 			
 			//Get database properties
 			set maxBlock=..GetBlockSize(directory)
@@ -156,8 +153,13 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 			//For each process
 			for i=1:1:pProcesses {
 				//Job off separate processes to perform random read test
-				job ..RanReadJob(date,startTime,batch,directory,pProcesses,pCount,pMode,maxBlock,i)
-				//w !,"  Prepped RanReadJob ",$ZCHILD," for parent ",$JOB										
+				set pre = $ZCHILD
+				job ..RanReadJob(date,startTime,batch,directory,pProcesses,pRunTime,maxBlock,i)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanRead("JOBLIST",$j,i)=post
+					//w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB," as element",i										
+				}
 			}
 				
 			write !,"Starting "_pProcesses_" processes for RanRead job number ",$JOB," now!"
@@ -178,24 +180,14 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 				
 			//Get average response time
 			set respTime=..GetAverageResponseTime(batch)
-			set endTime=$ztimestamp
-			set elapseTime=$p(endTime,",",2)-startTime
-			if respTime>0 { 
-				if pMode = 1 {
-					write !,"RanRead job ",$JOB,"'s ",pProcesses_" processes ("_elapseTime_" seconds) average response time = "_respTime_"ms"
-				} else {
-					write !,"RanRead job ",$JOB,"'s ",pProcesses_" processes ("_elapseTime_" iterations) average response time = "_respTime_"ms"
-				}
-				set IOPS=1000/respTime*pProcesses
-				write !,"Calculated IOPS for RanRead job ",$JOB," = "_$number(IOPS,0)
-			}
+			set IOPS=..GetTotalIOPS(batch)
+	
+			write !,"RanRead job ",$JOB,"'s ",pProcesses_" processes average response time = "_respTime_"ms"
+			write !,"Calculated IOPS for RanRead job ",$JOB," = "_$number(IOPS,0)
 
-			//Reset run flag
-			set ^PerfTools.RanRead("RUNSTATUS")=0
-				
 		} else {
 			write !,"ERROR: Directory not valid. See below for parameters."
-			write !,"do ##class(PerfTools.RanRead).Run(Directory,Processes,Count,Mode)"
+			write !,"do ##class(PerfTools.RanRead).Run(Directory,Processes,RunTime,Mode)"
 		}
 		
 	} catch errObj {
@@ -203,12 +195,18 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 		do errObj.Log()
 		do $system.OBJ.DisplayError(tSC)
 	}
+
+	if (^PerfTools.RanRead("RUNSTATUS")='$$$OK) {   // This is what Stop sets it to
+		if ('$SYSTEM.Process.IsProgrammerMode()) {
+			do $zu(4,$j,1) h 0
+		}
+	}
 ]]></Implementation>
 </Method>
 
 <Method name="RanReadJob">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pProcesses:%Integer,pCount:%Integer,pMode:%Integer,pMaxBlocks:%Integer,pJobNum:%Integer</FormalSpec>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pProcesses:%Integer,pRunTime:%Integer,pMaxBlocks:%Integer,pJobNum:%Integer</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
 	
@@ -217,9 +215,6 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 	#dim startTime,endTime,respTime,elapseTime as %String
 	
 	try {
-		//Setup background jobs counter
-		set ^PerfTools.RanRead("JOBS",(pJobNum))=$j
-		
 		//Add prefix to database directory 
 		set db="^^"_pDirectory
 		
@@ -234,15 +229,10 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 		}
 		
 		set total = 0
-
-		if pMode = 1 {
-			set pIterations = 50
-		} else {
-			set pIterations = pCount
-		}
+		set pIterations = 500
 
 		set start = $p(startTime,",",2)
-		set end = start + pCount  // used only for timed operation
+		set end = start + pRunTime 
 
 		while (^PerfTools.RanRead("RUNSTATUS")'=0) {
 			for i=1:1:pIterations {
@@ -253,37 +243,27 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 				View pBlockNum
 				close 63
 			}
-			//Exit loop if time is up
 			set total = total + pIterations
-			if (pMode = 1) {
-				quit:($p($ztimestamp,",",2) > end)
-			} else {
-				quit
-			}
+			//Exit loop if time is up
+			quit:($p($ztimestamp,",",2) > end)
 		}
 		set endTime=$ztimestamp
 		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
 		set respTime=(elapseTime/total)*1000
 		set respTime=$number(respTime,..#TIMEDECIMAL)
 		
-		//If only one process then display message in foreground
-		if pProcesses=1 {
-			write !,"Start "_startTime
-			write !,"End "_endTime
-			write !,"Response Time "_respTime_"ms"
-		}	
-		
 		//Save job info
 		set tObj=..%New()
 		set tObj.RunDate=pDate
 		set tObj.RunTime=pTime
 		set tObj.Batch=pBatch
+		set tObj.Job=pJobNum
 		set tObj.Database=pDirectory
 		set tObj.Iterations=total
+		set tObj.ProcTime=elapseTime
 		set tObj.Processes=pProcesses
-		set tObj.Job=pJobNum
 		set tObj.ResponseTime=respTime
-		set tObj.IOPS=1000/respTime*pProcesses
+		set tObj.IOPS=total/elapseTime
 		
 		$$$TOE(tSC,tObj.%Save())
 			
@@ -292,9 +272,6 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 		do errObj.Log()
 		do $system.OBJ.DisplayError(tSC)
 	}
-	
-	//Clean up job counter
-	kill ^PerfTools.RanRead("JOBS",(pJobNum))
 	
 	quit tSC
 ]]></Implementation>
@@ -325,7 +302,7 @@ SQL Query returns summary </Description>
 <Type>%SQLQuery</Type>
 <SqlQuery>	SELECT RunDate,RunTime,Database,Iterations,Processes,
 	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
-	{fn ROUND(AVG(IOPS),0)} As IOPS
+	{fn ROUND(SUM(IOPS),0)} As IOPS
 	FROM PerfTools.RanRead
 	GROUP BY Batch</SqlQuery>
 </Query>
@@ -450,6 +427,25 @@ Return average response time for specified batch run</Description>
 ]]></Implementation>
 </Method>
 
+<Method name="GetTotalIOPS">
+<Description>
+Return total IOPS for specified batch run</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total IOPS 
+	&sql(SELECT SUM(IOPS) 
+		INTO :total
+		FROM PerfTools.RanRead
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
 <Method name="CountJobs">
 <Description>
 Return number of background jobs running</Description>
@@ -458,15 +454,18 @@ Return number of background jobs running</Description>
 <Implementation><![CDATA[
 	#dim job as %Integer
 	#dim jobCount as %Integer = 0
-	
-	//Loop through background job counter
-	set job=$order(^PerfTools.RanRead("JOBS",("")))
-	while (job'="") {
-    	//Increment job counter	
-    	set jobCount=jobCount+1
-     	//Get next job 
-		set job = $order(^PerfTools.RanRead("JOBS",(job)))
-   	}
+
+	set key=$ORDER(^PerfTools.RanRead("JOBLIST",$j,""))
+	while (key'="") {
+		if ($DATA(^$JOB(^PerfTools.RanRead("JOBLIST",$j,key)))=1) {
+			set jobCount = jobCount + 1
+			//w !,"Job ",^PerfTools.RanRead("JOBLIST",$j,key)," still exists"
+		} else {
+			//w !,"Killing job ",^PerfTools.RanRead("JOBLIST",$j,key)
+			kill ^PerfTools.RanRead("JOBLIST",$j,key)
+		}
+		set key=$ORDER(^PerfTools.RanRead("JOBLIST",$j,key))
+	}
 
    	quit jobCount
 ]]></Implementation>
@@ -716,16 +715,6 @@ Create database directory if it doesn't exist then check if a database already e
 ]]></Implementation>
 </Method>
 
-<Method name="DisplayTitle">
-<Description>
-Display header</Description>
-<ClassMethod>1</ClassMethod>
-<Implementation><![CDATA[
-	write !,"InterSystems Random Read IO Performance Tool"
-	write !,"--------------------------------------------"
-]]></Implementation>
-</Method>
-
 <Method name="Stop">
 <Description>
 Set the stop flag to terminate all background jobs.</Description>
@@ -790,6 +779,9 @@ Delete all RanRead data</Description>
 </Value>
 <Value name="13">
 <Value>IOPS</Value>
+</Value>
+<Value name="14">
+<Value>ProcTime</Value>
 </Value>
 </Data>
 </Storage>

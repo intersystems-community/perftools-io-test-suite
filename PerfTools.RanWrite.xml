@@ -1,20 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-03-20 18:41:48">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-07-25 19:37:42">
 <Class name="PerfTools.RanWrite">
 <Description><![CDATA[
 Random write test
-Global name length is important, and could also be useful for different test scenarios;
-- the default is 3. If its shorter e.g 2, you end up updating the same blocks most of the time and you get a gradual increase in writes each WD cycle (see below).
-- if a longer name for the padding length, e.g. 3 the higher the writes to start. In the (first) example below I used the defaults and you can see that over time 
-the number of blocks updated per WD cycle drops off as existing blocks are updated (ie so on write only the last change is written).
- 
-There is a tstart and tcommit around each set, so to test journal synchs on ECP this can be run on an application server. The IO will still be on the DB server, but ECP and (high) journal synchs should be tested. I have not tested this yet... if I get a chance I will do that soon. there may be some pacing needed there too.   
- 
-After 30 minutes test the ranwrite DB was about 3GB.
 
+There is a tstart and tcommit around each set, so to test journal synchs on ECP this can be run on an application server. The IO will still be on the DB server, but ECP and (high) journal synchs should be tested.
+ 
 ranwrite uses very little CPU (<1%) so could be run with RANREAD for a r/w smoke test. Adjust the pacing for the expected load.]]></Description>
 <Super>%Persistent</Super>
-<TimeChanged>66553,65689.097939764</TimeChanged>
+<TimeChanged>66680,70631.953117213</TimeChanged>
 <TimeCreated>65488,66744.147036</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -30,7 +24,7 @@ ranwrite uses very little CPU (<1%) so could be run with RANREAD for a r/w smoke
 </Parameter>
 
 <Parameter name="TIMEDECIMAL">
-<Default>3</Default>
+<Default>4</Default>
 </Parameter>
 
 <Property name="RunDate">
@@ -55,7 +49,7 @@ Run number</Description>
 
 <Property name="Namespace">
 <Description>
-Database directory used for the random write test</Description>
+Namespace used for the random write test</Description>
 <Type>%String</Type>
 </Property>
 
@@ -77,6 +71,12 @@ Number of iterations</Description>
 <Type>%Integer</Type>
 </Property>
 
+<Property name="ProcTime">
+<Description>
+Worker job runtime</Description>
+<Type>%Time</Type>
+</Property>
+
 <Property name="ResponseTime">
 <Description>
 Response Time in milliseconds</Description>
@@ -85,7 +85,7 @@ Response Time in milliseconds</Description>
 
 <Property name="IOPS">
 <Description>
-Calculated IOPS (1000ms / Processes * Response Time)</Description>
+Calculated IOPS</Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -100,7 +100,17 @@ Display help</Description>
 	set str=" - "
 	write !,"do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName)"
 	write !,str_"Creates database and namespace with the same name."
-	write !,"do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime,HangTime,HangVariationPct,Global name length,Global node depth,Global subnode length)"
+	write !,"do ##class(PerfTools.RanWrite).CreateGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1," 
+	write !,str_"^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each."
+	write !,"do ##class(PerfTools.RanWrite).AddGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates more Globals if needed after the initial creation is done." 
+	write !,str_"NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1"
+	write !,"do ##class(PerfTools.RanWrite).CountSubscripts(Directory)"
+	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanWrite).GetSizes(Directory)"
+	write !,str_"Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms))"
 	write !,str_"Run the random write IO test. All parameters other than the directory have defaults."
 	write !,"do ##class(PerfTools.RanWrite).Stop()"
 	write !,str_"Terminates all background jobs."
@@ -288,25 +298,25 @@ Delete database and namespace for random write test</Description>
 		set Status=##Class(SYS.Database).DismountDatabase(directory)
 		if '$$$ISOK(Status) {
 			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
-			quit
+			return
 		}
 
 		set Status=##Class(SYS.Database).DeleteDatabase(directory)
 		if '$$$ISOK(Status) {
 			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
-			quit
+			return
 		}
 
 		set Status=##Class(Config.Namespaces).Delete(dbName)
 		if '$$$ISOK(Status) {
 			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
-			quit
+			return
 		}
 
 		set Status=##Class(Config.Databases).Delete(dbName)
 		if '$$$ISOK(Status) {
 			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
-			quit
+			return
 		}
 
 		set args=2
@@ -318,23 +328,258 @@ Delete database and namespace for random write test</Description>
 ]]></Implementation>
 </Method>
 
-<Method name="Run">
-<Description><![CDATA[
-do ##class(PerfTools.RanWrite).Run(<directory>,<number of procs>,<run time in seconds>,<hang time in seconds>, <Percent variation in hang time>, <Global name length>, <Global node depth>, <Global subnode length>)
-do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></Description>
+<Method name="CreateGlobals">
+<Description>
+Pre-create a few top-level globals with some number of pre-existing subscripts</Description>
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pDurationSecs:%Integer=300,pHang=0.01,pRandom:%Integer=20,pNodeLength:%Integer=3,pNodeDepth:%Integer=2,pSubnodeLength:%Integer=5</FormalSpec>
+<FormalSpec>pDirectory:%String="",pNumGlobals:%Integer=5,pNumSubscripts:%Integer=1000000</FormalSpec>
 <Implementation><![CDATA[
-	#dim tSC as %Status = $$$OK
 	#dim directory,db as %String
-	#dim h,date,time as %String
-	#dim i,batch,maxBlock,currentJobs,IOPS as %Integer
-	#dim respTime as %Double
-	
-	if (pRandom>100) {
-		write !,"Error=Random variance (fifth argument) cannot be greater than 100%"
-		quit
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write "Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			write "Starting global creation",!
+			//For each global, job off a separate process to create it
+			for i=1:1:pNumGlobals {
+				set pre = $ZCHILD
+				job ..CreateGlobalsMain(namespace,i,pNumSubscripts)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanWrite("JOBLIST",$j,i)=post
+				}
+			}
+
+			//Loop while background jobs are running
+			set timer=6
+			do {
+				set currentJobs=..CountJobs()
+				if timer>5 set timer = 0 write "."
+				hang 10
+				set timer = timer + 1
+			} while currentJobs>0
+
+			zn namespace
+			set ^RanWriteGlobalCount=pNumGlobals			
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
 	}
+]]></Implementation>
+</Method>
+
+<Method name="AddGlobals">
+<Description>
+Pre-create a few top-level globals with some number of pre-existing subscripts</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String="",pNumGlobals:%Integer=5,pNumSubscripts:%Integer=0</FormalSpec>
+<Implementation><![CDATA[
+	#dim directory,db as %String
+	#dim numGlobals,numSubscripts as %Integer
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write "Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			if '$data(^RanWriteGlobalCount) {
+				write "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+
+			set numGlobals = ^RanWriteGlobalCount
+
+			if (numGlobals >= pNumGlobals) {
+				write "There are already "_numGlobals_" Globals present."
+				zn return
+				return
+			}
+
+			set diff = pNumGlobals - numGlobals
+			write "Filling "_diff_" new Globals, starting with number "_(numGlobals+1)
+
+			set numSubscripts = pNumSubscripts
+			if (numSubscripts = 0) {
+				set numSubscripts = $number(^RanWriteGlobal1("Size"))
+			}
+			write !,"Number of subscripts is "_numSubscripts
+
+			zn return
+			
+			write !,"Starting global creation",!
+			//For each global, job off a separate process to create it
+			for i=numGlobals+1:1:pNumGlobals {
+				set pre = $ZCHILD
+				job ..CreateGlobalsMain(namespace,i,numSubscripts)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanWrite("JOBLIST",$j,i)=post
+				}
+			}
+
+			//Loop while background jobs are running
+			set timer=6
+			do {
+				set currentJobs=..CountJobs()
+				if timer>5 set timer = 0 write "."
+				hang 10
+				set timer = timer + 1
+			} while currentJobs>0
+
+			zn namespace
+			set ^RanWriteGlobalCount=pNumGlobals			
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="CreateGlobalsMain">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pNameSpace:%String,pGlobal:%Integer,pNumSubscripts:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	zn pNameSpace
+
+	set var = "^RanWriteGlobal"_pGlobal
+	if ($data(@var)) {
+		kill @var
+	}
+	set @var="Created by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h)
+	// Create initial subscripts
+	for index=1:1:pNumSubscripts {
+		set location = var_"("_index_")"
+		set @location = "Created by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h)
+	}
+	set location = var_"("_"""Size"""_")"
+	set @location = pNumSubscripts
+]]></Implementation>
+</Method>
+
+<Method name="CountSubscripts">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String=""</FormalSpec>
+<Implementation><![CDATA[
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write "Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
+			}
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			set total = 0
+
+			if '$data(^RanWriteGlobalCount) {
+				write "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+
+			set numGlobals = ^RanWriteGlobalCount
+			write "Number of Globals is: "_numGlobals 
+
+			for i=1:1:numGlobals {
+				set count = 0
+				set start = "^RanWriteGlobal"_i_"("_""""""_")"
+				set key=$ORDER(@start)
+				while (key'="") {
+     				// Get next subscript 
+					if (key'="Size"){
+						set location="^RanWriteGlobal"_i_"("_key_")"
+					} else {
+						set location="^RanWriteGlobal"_i_"("_"""Size"""_")"					
+					}
+	 				set key = $ORDER(@location)
+					set count = count + 1
+				}
+				// Return one fewer than the counted total because the "Size" variable also exists
+				write !,"Number of subscripts in ^RanWriteGlobal"_i_" is: "_(count-1) 
+				set total = total + (count - 1)
+ 			}
+			write !,"Number of subscripts in all globals is: "_total 
+
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="GetSizes">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String=""</FormalSpec>
+<Implementation><![CDATA[
+	#dim directory,db as %String
 
 	try {
 		//Normalize directory
@@ -350,13 +595,107 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
 			if '$$$ISOK(Status) {
 				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
-				quit
+				zn return
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			if '$data(^RanWriteGlobalCount) {
+				write !, "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+			set numGlobals = ^RanWriteGlobalCount
+			write !,numGlobals 
+
+			for i=1:1:numGlobals {
+				set var = "^RanWriteGlobal"_i
+				if ($data(@var)) {
+					set var = "^RanWriteGlobal"_i_"("_"""Size"""_")"
+					w ","_@var
+				}
+				else {
+					w ",NA"
+				}
+			}
+
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="Run">
+<Description><![CDATA[
+do ##class(PerfTools.RanWrite).Run(<directory>,<number of procs>,<run time in seconds>,<number of writes per transaction>,<hang time in milliseconds>)
+do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Float=2</FormalSpec>
+<Implementation><![CDATA[
+	#dim tSC as %Status = $$$OK
+	#dim directory,db as %String
+	#dim h,date,time as %String
+	#dim i,batch,currentJobs,IOPS as %Integer
+	#dim respTime as %Double
+	
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
 			}
 
 			//Convert database name to UPPER case
 			set namespace=$zconvert(dblist,"U")
 			set namespace=$zstrip(namespace,"<>WPC")
 
+			zn namespace
+			set total = 0
+			if '$data(^RanWriteGlobalCount) {
+				write !, "The variable ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+			set numGlobals = ^RanWriteGlobalCount
+			write !,"Number of Globals is: "_numGlobals 
+
+			if (numGlobals < pProcesses) {
+				write !,"There are insufficient Globals to run "_pProcesses_" jobs."
+				write !,"Please either reduce the number of jobs to "_numGlobals_" or fewer, or run AddGlobals to make up the difference."
+				zn return
+				return
+			}
+
+			for i=1:1:numGlobals {
+				set var = "^RanWriteGlobal"_i_"("_"""Size"""_")"
+				set count = @var
+				//write !,"Number of subscripts in ^RanWriteGlobal"_i_" is: "_count
+				set total = total + count
+ 			}
+			write !,"Total number of subscripts in all globals is: "_total 
+			
 			zn return
 
 			//Each run is identified by the start date / time to keep related items together.
@@ -369,17 +708,22 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 				
 			//Set run flag to zero - don't start running until all jobs created
 			set ^PerfTools.RanWrite("RUNSTATUS")=0
-			
+
 			//For each process
 			for i=1:1:pProcesses {
-				//Job off separate processes to perform random read test
-			    job ..RanWriteJob(date,time,batch,namespace,pProcesses,pDurationSecs,pHang,pRandom,pNodeLength,pNodeDepth,pSubnodeLength,i)
-				//w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB										
+				//Job off separate processes to perform random write test
+				set pre = $ZCHILD
+			    job ..RanWriteJob(date,time,batch,namespace,pRunTime,pTransactionLength,pHang,i,pProcesses)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanWrite("JOBLIST",$j,i)=post
+					//w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB," as element",i										
+				}
 			}
 				
 			write !,"Starting "_pProcesses_" processes for RanWrite job number ",$JOB," now!"
 			//Start all jobs
-			set ^PerfTools.RanWrite("RUNSTATUS")=$$$OK
+			set ^PerfTools.RanWrite("RUNSTATUS")=$$$OK /// This sets it to 1
 				
 			write !,"To terminate run:  do ##class(PerfTools.RanWrite).Stop()"
 			write !,"Waiting to finish."
@@ -388,26 +732,20 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 				set currentJobs=..CountJobs()
 				hang 1
 				write "."
-				
 			} while currentJobs>0
 						
 			write !,"Random write background jobs finished for parent ",$JOB
-				
-			//Get average response time
-			set respTime=..GetAverageResponseTime(batch)
-			if respTime>0 { 
-				write !,"RanWrite job ",$JOB,"'s ",pProcesses_" processes ("_pDurationSecs_" seconds) had average response time = "_respTime_"ms"
-
-				set IOPS=1000/respTime*pProcesses
-				write !,"Calculated IOPS for RanWrite job ",$JOB," = "_$number(IOPS,0)
-			}
 			
-			//Reset run flag
-			set ^PerfTools.RanWrite("RUNSTATUS")=0
-				
+			//Get average response time and IOPS
+			set respTime=..GetAverageResponseTime(batch)
+			set IOPS=..GetTotalIOPS(batch)
+
+			write !,"RanWrite job ",$JOB,"'s ",pProcesses_" processes ("_pRunTime_" seconds) had average response time = "_respTime_"ms"
+			write !,"Calculated IOPS for RanWrite job ",$JOB," = "_$number(IOPS,0)
+							
 		} else {
-			write !,"ERROR: Directory not valid. See below for parameters."
-			write !,"do ##class(PerfTools.RanWrite).Run(<namespace>,<run time in seconds>,<hang time in seconds>, <Global name length>, <Global node depth>, <Global subnode length>)"
+			write !,"ERROR: Directory not valid. Call the following for help:"
+			write !,"do ##class(PerfTools.RanWrite).Help()"
 		}
 		
 	} catch errObj {
@@ -415,27 +753,28 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 		do errObj.Log()
 		do $system.OBJ.DisplayError(tSC)
 	}
+
+	if (^PerfTools.RanWrite("RUNSTATUS")='$$$OK) {   // This is what Stop sets it to
+		if ('$SYSTEM.Process.IsProgrammerMode()) {
+			do $zu(4,$j,1) h 0
+		}
+	}
 ]]></Implementation>
 </Method>
 
 <Method name="RanWriteJob">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,namespace:%String,pProcesses:%Integer,pDurationSecs:%Integer,pHang:%Integer,pRandom:%Integer,pNodeLength:%Integer,pNodeDepth:%Integer,pSubnodeLength:%Integer,pJobNum:%Integer</FormalSpec>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pNamespace:%String,pRunTime:%Integer,pTransactionLength:%Integer,pHang:%Float,pJobNum:%Integer,pNumProcesses:%Integer</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
 	
 	#dim db as %String
-	#dim i as %Integer
+	#dim i,numGlobals,total,index,count as %Integer
 	#dim startTime,endTime,respTime,elapseTime as %String
 
 	try {
-		//Setup background jobs counter
-		set ^PerfTools.RanWrite("JOBS",(pJobNum))=$j
-		
 		set home = $NAMESPACE
-		zn namespace
-
-		set startTime=$ztimestamp
+		zn pNamespace
 		
 		//Loop until ready to go
 		for i=1:1 {
@@ -446,38 +785,39 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 		}
 
 		set total = 0
-		set pIterations = 50
-		set start = $p(startTime,",",2)
+		set numGlobals = ^RanWriteGlobalCount
 
+		set startTime=$ztimestamp
+		set start = $p(startTime,",",2)
+		set end = start + pRunTime
+
+		///set loremipsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."
 		while (^[home]PerfTools.RanWrite("RUNSTATUS")'=0) {
-			for i=1:1:pIterations {
-				// Determine random variation for this cycle
-				set rand=$random(pRandom)
-				set sign=$random(2)
-				set myhang=0
-				if (sign>0) {set myhang=pHang*(1.0+(rand/100))}
-				else {set myhang=pHang*(1.0-(rand/100))}
-				// Write random string and hang the amount determined above
-    	    	tstart
-        		do ..SetVar(pNodeLength,pNodeDepth,pSubnodeLength)
-    	    	tcommit
-	    	    hang myhang	
+			// Choose which global to update for this transaction
+			//set global = $random(numGlobals)+1  // This randomization removed to stop collisions
+			set global = pJobNum
+			set var = "^RanWriteGlobal"_global_"("_"""Size"""_")"
+			set count = @var
+
+   	    	tstart
+			for i=1:1:pTransactionLength {
+				set index = $random(count)+1
+				set var = "^RanWriteGlobal"_global_"("_index_")"
+				set @var = "Updated by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h) ///_" "_loremipsum
 			}
+   	    	tcommit
+			set total = total + pTransactionLength
+    	
+		    //hang pHang/1000  // Input is in milliseconds, hang in seconds
+		    d $zu(136,27,pHang*1000000)  // Input is in milliseconds, $zu command in nanoseconds
+
 			//Exit loop if time is up
-			set total = total + pIterations
-			quit:($p($ztimestamp,",",2) > (start+pDurationSecs))
+			quit:($p($ztimestamp,",",2) > end)
 		}
 		set endTime=$ztimestamp
 		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
-		set respTime=(elapseTime/total)*1000
+		set respTime=(elapseTime/total)*1000  // %The multiplier is so that it's in milliseconds for readibility
 		set respTime=$number(respTime,..#TIMEDECIMAL)
-		
-		//If only one process then display message in foreground
-		if pProcesses=1 {
-			write !,"Start "_startTime
-			write !,"End "_endTime
-			write !,"Response Time "_respTime_"ms"
-		}	
 
 		zn home
 
@@ -486,12 +826,13 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 		set tObj.RunDate=pDate
 		set tObj.RunTime=pTime
 		set tObj.Batch=pBatch
-		set tObj.Namespace=namespace
-		set tObj.Iterations=total
-		set tObj.Processes=pProcesses
 		set tObj.Job=pJobNum
+		set tObj.Namespace=pNamespace
+		set tObj.Iterations=total
+		set tObj.ProcTime=elapseTime
+		set tObj.Processes=pNumProcesses
 		set tObj.ResponseTime=respTime
-		set tObj.IOPS=1000/respTime*pProcesses
+		set tObj.IOPS=total/elapseTime
 		
 		$$$TOE(tSC,tObj.%Save())
 			
@@ -500,30 +841,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,.0005,40,2,2,5)]]></De
 		do errObj.Log()
 		do $system.OBJ.DisplayError(tSC)
 	}
-	
-	//Clean up job counter
-	kill ^PerfTools.RanWrite("JOBS",(pJobNum))
-	
 	quit tSC
-]]></Implementation>
-</Method>
-
-<Method name="GetBlockSize">
-<Description>
-Get database block size</Description>
-<ClassMethod>1</ClassMethod>
-<FormalSpec>pDirectory:%String</FormalSpec>
-<ReturnType>%String</ReturnType>
-<Implementation><![CDATA[
-	//Switch to %SYS namespace
-	New $NAMESPACE
-    set $NAMESPACE="%SYS"
-    
-	set db=##Class(SYS.Database).%OpenId(pDirectory)
-	set maxBlock=(db.Size*1024*1024)/db.BlockSize
-	//write !,"Database: "_db.Directory
-			
-	quit maxBlock
 ]]></Implementation>
 </Method>
 
@@ -533,7 +851,7 @@ SQL Query returns summary </Description>
 <Type>%SQLQuery</Type>
 <SqlQuery>	SELECT RunDate,RunTime,Namespace,Iterations,Processes,
 	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
-	{fn ROUND(AVG(IOPS),0)} As IOPS
+	{fn ROUND(SUM(IOPS),0)} As IOPS
 	FROM PerfTools.RanWrite
 	GROUP BY Batch</SqlQuery>
 </Query>
@@ -658,6 +976,25 @@ Return average response time for specified batch run</Description>
 ]]></Implementation>
 </Method>
 
+<Method name="GetTotalIOPS">
+<Description>
+Return total IOPS for specified batch run</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total IOPS 
+	&sql(SELECT SUM(IOPS) 
+		INTO :total
+		FROM PerfTools.RanWrite
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
 <Method name="CountJobs">
 <Description>
 Return number of background jobs running</Description>
@@ -667,16 +1004,35 @@ Return number of background jobs running</Description>
 	#dim job as %Integer
 	#dim jobCount as %Integer = 0
 	
-	//Loop through background job counter
-	set job=$order(^PerfTools.RanWrite("JOBS",("")))
-	while (job'="") {
-    	//Increment job counter	
-    	set jobCount=jobCount+1
-     	//Get next job 
-		set job = $order(^PerfTools.RanWrite("JOBS",(job)))
-   	}
-
+	set key=$ORDER(^PerfTools.RanWrite("JOBLIST",$j,""))
+	while (key'="") {
+		if ($DATA(^$JOB(^PerfTools.RanWrite("JOBLIST",$j,key)))=1) {
+			set jobCount = jobCount + 1
+			//w !,"Job ",^PerfTools.RanWrite("JOBLIST",$j,key)," still exists"
+		} else {
+			//w !,"Killing job ",^PerfTools.RanWrite("JOBLIST",$j,key)
+			kill ^PerfTools.RanWrite("JOBLIST",$j,key)
+		}
+		set key=$ORDER(^PerfTools.RanWrite("JOBLIST",$j,key))
+	}
    	quit jobCount
+]]></Implementation>
+</Method>
+
+<Method name="Min">
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[
+    s tmp=99999999999999
+    f i=1:1:10 { 
+        s zh=$zh
+        d $zu(136,27,1)
+        s zh=$zh-zh
+        s:zh<tmp tmp=zh
+        w tmp," "
+    }
+    s tmp=tmp*1000000 ; convert to microseconds
+    w !,"Min effective sleep time is ",tmp," microseconds"
 ]]></Implementation>
 </Method>
 
@@ -685,72 +1041,6 @@ Return number of background jobs running</Description>
 Set the stop flag to terminate all background jobs.</Description>
 <ClassMethod>1</ClassMethod>
 <Implementation><![CDATA[	set ^PerfTools.RanWrite("RUNSTATUS")='$$$OK
-]]></Implementation>
-</Method>
-
-<Method name="SetVar">
-<ClassMethod>1</ClassMethod>
-<FormalSpec>pNodeLength,pNodeDepth,pSubnodeLength</FormalSpec>
-<Implementation><![CDATA[
-	set var="^"_..VAR(pNodeLength,pNodeDepth,pSubnodeLength)
-	set @var="Process: "_$piece($io,"/",3)_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h)
-]]></Implementation>
-</Method>
-
-<Method name="VAR">
-<ClassMethod>1</ClassMethod>
-<FormalSpec>LENGTH,NODES,NODELENGTH</FormalSpec>
-<ReturnType>%String</ReturnType>
-<Implementation><![CDATA[
-	
-	set:($get(LENGTH)="") LENGTH=3
-	 
-	set VAR=..Alpha()
-	
-	if ($piece(LENGTH,".",1)>1) {
-		// Add characters to integer length
-		for i=2:1:(+$piece(LENGTH,".",1)) {
-			set $extract(VAR,i)=..AlphaNum()
-		}
-	}
-	else {}
-	
-	if ((+$get(NODES))'<1) {
-		set VAR=VAR_"("
-		// Add nodes to integer nodes
-		for i=1:1:(+$piece(NODES,".",1)) {
-			set VAR(i)=..VAR(.NODELENGTH)
-			set VAR=VAR_""""_VAR(i)_""""
-			set:(i<(+$piece(NODES,".",1))) VAR=VAR_","
-		}
-		set VAR=VAR_")"
-	}
-	else {}
-	
-	quit VAR
-]]></Implementation>
-</Method>
-
-<Method name="Alpha">
-<Description>
-Create a random alphabetic character (65-90,97-112)</Description>
-<ClassMethod>1</ClassMethod>
-<ReturnType>%String</ReturnType>
-<Implementation><![CDATA[
-	set CHAR=$char(65+$random(26)+(32*$random(2)))
-	quit CHAR
-]]></Implementation>
-</Method>
-
-<Method name="AlphaNum">
-<Description>
-Create a random alphabetic character or digit</Description>
-<ClassMethod>1</ClassMethod>
-<ReturnType>%String</ReturnType>
-<Implementation><![CDATA[
-	set CHAR=$random(62)
-	set:(CHAR>9) CHAR=..Alpha()
-	quit CHAR
 ]]></Implementation>
 </Method>
 
@@ -771,6 +1061,7 @@ Delete all RanWrite data</Description>
 <IdLocation>^PerfTools.RanWriteD</IdLocation>
 <IndexLocation>^PerfTools.RanWriteI</IndexLocation>
 <StreamLocation>^PerfTools.RanWriteS</StreamLocation>
+<ExtentSize>40</ExtentSize>
 <Data name="RanWriteDefaultData">
 <Value name="1">
 <Value>%%CLASSNAME</Value>
@@ -814,7 +1105,69 @@ Delete all RanWrite data</Description>
 <Value name="14">
 <Value>Namespace</Value>
 </Value>
+<Value name="15">
+<Value>ProcTime</Value>
+</Value>
 </Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,0,16,$lb("-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000"),$lb(21,21,21,21,21,21,21,21,21,21,21,21,21,21,21),$lb(758198320,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,758198320))</Histogram>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(1,3,6,9,12,15,18,21,24,27,30,32,34,36,38,40),$lb(0,0,0,0,1,1,0,1,1,0,1,1,1,1,0),$lb(822083584,822083584,855638016,855638016,905969664,905969664,956301312,956301312,825360384,838860800,889192448,889192448,939524096,825753600,842072064,822083584,872415232,872415232,922746880,842465280,858783744,805306368,838860800,838860800,872415232,872415232,905969664,905969664,939524096,859308032,875560960,875560960))</Histogram>
+</Property>
+<Property name="Batch">
+<Selectivity>12.5000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(1,1,2,2,3,3,4,6,6,7,7,8,8,9,9,9),$lb(1,0,1,0,1,0,0,1,0,1,0,1,0,1,1),$lb(822083584,0,0,822083584,838860800,0,0,838860800,855638016,0,0,855638016,872415232,872415232,905969664,0,0,905969664,922746880,0,0,922746880,939524096,0,0,939524096,956301312,0,0,0,0,956301312))</Histogram>
+</Property>
+<Property name="IOPS">
+<Selectivity>14.2857%</Selectivity>
+<AverageFieldSize>3.25</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(19,19,19,29,29,29,29,35,53,53,53,58823,58823,58823,58823,58823),$lb(2,2,0,2,2,2,0,0,2,2,1,5,5,5,5),$lb(825819136,0,0,0,0,825819136,842596352,0,0,0,0,0,0,842596352,859111424,859111424,892534784,0,0,0,0,855638016,943206963,0,0,0,0,0,0,0,0,892876850))</Histogram>
+</Property>
+<Property name="Iterations">
+<Selectivity>7.1429%</Selectivity>
+<AverageFieldSize>3.73</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(30,30,30,60,60,60,60,90,540,540,540,286800,288570,289980,291450,292320),$lb(2,2,0,2,2,2,0,0,3,3,0,2,2,1,2),$lb(858783744,0,0,0,0,858783744,909115392,0,0,0,0,0,0,909115392,959447040,959447040,892612608,0,0,0,0,892612608,842544696,909652016,943011632,943011632,960051248,943274296,959525941,825505072,842215984,842609203))</Histogram>
+</Property>
+<Property name="Job">
+<Selectivity>20.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,5),$lb(1,1,0,1,1,0,1,1,0,1,1,0,1,1,1),$lb(822083584,0,0,0,0,822083584,838860800,0,0,0,0,838860800,855638016,0,0,0,0,855638016,872415232,0,0,0,0,872415232,889192448,0,0,0,0,0,0,889192448))</Histogram>
+</Property>
+<Property name="Namespace">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>5</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,0,0,$lb(" RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"),$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(542261582,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,542261582))</Histogram>
+</Property>
+<Property name="Processes">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1),$lb(889192448,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,889192448))</Histogram>
+</Property>
+<Property name="ResponseTime">
+<Selectivity>2.5833%</Selectivity>
+<OutlierSelectivity>.225:.017</OutlierSelectivity>
+<AverageFieldSize>4.75</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,0,0,$lb(" .017"," .017"," .017"," .017"," 18.634"," 18.716"," 18.874"," 28.175"," 33.606"," 33.666"," 33.686"," 34.111"," 50.46"," 50.545"," 50.717"," 50.991"),$lb(6,6,6,1,4,4,1,1,5,5,2,1,4,4,4),$lb(539897905,0,0,0,0,0,0,774910263,825765430,909325312,925971968,925971968,943141888,825765432,842542641,842542641,858992182,808845312,909508608,909508608,943063040,858666552,875442481,859057713,892350004,875954176,892613888,892613888,925972224,925972224,960049408,540356654))</Histogram>
+</Property>
+<Property name="RunDate">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>5</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627),$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(909522482,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,909522482))</Histogram>
+</Property>
+<Property name="RunTime">
+<Selectivity>12.5000%</Selectivity>
+<AverageFieldSize>4</AverageFieldSize>
+<Histogram>$lb(.06666666666666666667,1,0,$lb(55595,55595,55611,55611,55627,55627,56791,56854,56854,56856,56856,56919,56919,56922,56922,56922),$lb(5,2,5,3,5,1,2,5,4,5,2,5,3,5,5),$lb(892679481,0,0,892941568,909193472,0,0,825294848,842465280,0,0,892744247,909588785,926494976,943010816,0,0,872415232,905969664,0,0,943011328,959527168,0,0,825819136,842137600,0,0,0,0,892746034))</Histogram>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-4</BlockCount>
+</SQLMap>
 </Storage>
 </Class>
 </Export>
