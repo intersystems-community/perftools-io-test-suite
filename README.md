@@ -1,17 +1,18 @@
 ### Purpose
 
-This pair of tools (RanRead and RanWrite) is used to generate random read and write events within a database (or pair of databases) to test Input/Output operations per second (IOPS). They can be used either in conjunction or separately to test IO hardware capacity, validate target IOPS, and ensure acceptable disk response times are sustained. Results gathered from the IO tests will vary from configuration to configuration based on the IO sub-system. Before running these tests ensure corresponding operating system and storage level monitoring are configured to capture IO performance metrics for later analysis. The suggested method is by running the System Performance tool that comes bundled within IRIS. Please note that this is an update to a previous release, which can be found [here](https://community.intersystems.com/post/random-read-io-storage-performance-tool).
+This set of tools (RanRead, RanWrite, and the combined RanIO) is used to generate random read and write events within a database (or pair of databases) to test Input/Output operations per second (IOPS). They can be used either in conjunction or separately to test IO hardware capacity, validate target IOPS, and ensure acceptable disk response times are sustained. Results gathered from the IO tests will vary from configuration to configuration based on the IO sub-system. Before running these tests ensure corresponding operating system and storage level monitoring are configured to capture IO performance metrics for later analysis. The suggested method is by running the System Performance tool that comes bundled within IRIS. Please note that this is an update to a previous release, which can be found [here](https://community.intersystems.com/post/random-read-io-storage-performance-tool).
 
 <!--break-->
 
 ### Installation
 
-Download the **PerfTools.RanRead.xml** and **PerfTools.RanWrite.xml** tools from GitHub [here](https://github.com/intersystems-community/perftools-io-test-suite).
+Download the **PerfTools.RanRead.xml**, **PerfTools.RanWrite.xml**, and **PerfTools.RanIO.xml** tools from GitHub [here](https://github.com/intersystems-community/perftools-io-test-suite).
 
 Import tools into USER namespace.
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do $system.OBJ.Load("/tmp/PerfTools.RanRead.xml","ckf")</pre>
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do $system.OBJ.Load("/tmp/PerfTools.RanWrite.xml","ckf")</pre>
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do $system.OBJ.Load("/tmp/PerfTools.RanIO.xml","ckf")</pre>
 
 Run the Help method to see all entry points. All commands are run in USER.
 
@@ -69,19 +70,31 @@ Deletes namespace and database of the same name.
  - do ##class(PerfTools.RanWrite).Export(Directory)  
 Exports a summary of all random write test history to comma delimited text file.  
 
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);"> USER> do ##class(PerfTools.RanIO).Help()</pre>
+
+The commands here are a combination of the two above and work the same way, with the notable exception of:
+ 
+ - do ##class(PerfTools.RanIO).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms),PctReads)
+
+The final argument here, PctReads, indicates the percentage of operations that are reads, defaulting to 50%.
+
 ### Setup
 
-Create an empty (pre-expanded) database called RAN at least twice the size of the memory of the physical host to be tested. Ensure empty database is at least four times the storage controller cache size. The database needs to be larger than memory to ensure reads are not cached in file system cache. You can create manually or use the following method to automatically create a namespace and database.
+Create an empty (pre-expanded) database called RAN at least twice the size of the memory of the physical host to be tested. Ensure empty database is at least four times the storage controller cache size. The database needs to be larger than memory to ensure reads are not cached in file system cache. You can create manually or use the following methods to automatically create a namespace and database.
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanRead).Setup("/ISC/tests/TMP","RAN",200,1)</pre>
+
+OR
+
+<pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER> do ##class(PerfTools.RanIO).Setup("/ISC/tests/TMP","RAN",200,1)</pre>
 
 Created directory /ISC/tests/TMP/  
 Creating 200GB database in /ISC/tests/TMP/  
 Database created in /ISC/tests/TMP/  
 
-NOTE: One can use the same database for both RanRead and RanWrite, or use separate ones if intending to test multiple disks at once or for specific purposes. The RanRead code allows one to specify the size of the database, but the RanWrite code does not, so it's probably best to use the RanRead Setup command for creating any pre-sized databases desired even if one will use the database with RanWrite.
+NOTE: One can use the same database for all tools, or use separate ones if intending to test multiple disks at once or for specific purposes. The RanRead and RanIO code allows one to specify the size of the database, but the RanWrite code does not, so if a pre-sized database is used it's probably best to use the RanRead or RanIO Setup command even if one will use the database with RanWrite.
 
-After the directory is created, RanRead can be run immediately, but if you wish to run RanWrite you must first pre-create the Globals it will use. The number of Globals should equal or exceed the number of processes you wish to run with RanWrite. 
+After the directory is created, RanRead can be run immediately, but if you wish to run RanWrite or RanIO you must first pre-create the Globals it will use. The number of Globals should equal or exceed the number of processes you wish to run with RanWrite. The rest of this will be demonstrated with RanWrite, but works the same with RanIO. Note that the names of the created Globals will be ^RanWriteGlobal1 and so on even when using RanIO; this was to make sure that the two tools are interoperable.
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).CreateGlobals("/ISC/tests/TMP",10,1000000)</pre>              
 Starting global creation
@@ -145,7 +158,7 @@ Random read background jobs finished for parent 11742
 RanRead job 11742's 5 processes (62.856814 seconds) average response time = 1.23ms  
 Calculated IOPS for RanRead job 11742 = 4065  
 
-For RanWrite, each process attaches to a single ^RanWriteGlobal and writes multiple transactions to that Global and only that Global. The transaction length parameter is how many writes are performed by each job during each cycle, while the Hangtime parameter is the delay between transactions in milliseconds. In other words, if you have a transaction length of 50 and a hangtime of 2, each process will write 50 times as quickly as possible into its associated ^RanWriteGlobal, and then pause for 2 milliseconds, then repeat. Execute the Run method decreasing the Hangtime parameter and/or increasing the number of jobs. Those parameters are the primary drivers of IOPS for RanWrite. O
+For RanWrite, each process attaches to a single ^RanWriteGlobal and writes multiple transactions to that Global and only that Global. The transaction length parameter is how many writes are performed by each job during each cycle, while the Hangtime parameter is the delay between transactions in milliseconds. In other words, if you have a transaction length of 50 and a hangtime of 2, each process will write 50 times as quickly as possible into its associated ^RanWriteGlobal, and then pause for 2 milliseconds, then repeat. Execute the Run method decreasing the Hangtime parameter and/or increasing the number of jobs. Those parameters are the primary drivers of IOPS for RanWrite.
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">USER>do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,60,50,2))</pre>
 
@@ -159,11 +172,11 @@ Random write background jobs finished for parent 1424
 RanWrite job 1424's 10 processes (60 seconds) had average response time = .0545ms  
 Calculated IOPS for RanWrite job 1424 = 183414  
  
-In order to run RanRead and RanWrite together, instead of "do", use the "job" command for both of them to run them in the background.
+In order to run RanRead and RanWrite together, instead of "do", use the "job" command for both of them to run them in the background, or use RanIO. In the case of RanIO, each "transaction" as above in RanWrite will be a batch of reads OR writes, as decided by random selection and the ReadPct parameter. So, if you have 10 processes running in 10 separate Globals, each process will run in its associated Global, and each cycle it will "roll the dice" to decide if it's a read or write cycle, and then do TransactionLength iterations followed by a wait of HangTime milliseconds.
 
 ### Results
 
-In order to acquire the simple results for each run that are saved in USER in SQL table PerfTools.RanRead and PerfTools.RanWrite, use the Export command for each tool as follows.
+In order to acquire the simple results for each run that are saved in USER in SQL table PerfTools.RanRead, PerfTools.RanWrite, and PerfTools.RanIO (yes, this is separate from the other two) use the Export command for each tool as follows.
 
 To export the result set to a comma delimited text file (csv) run the following:
 
@@ -171,6 +184,8 @@ To export the result set to a comma delimited text file (csv) run the following:
 
 Exporting summary of all random read statistics to /ISC/tests/TMP/PerfToolsRanRead_20221023-1408.txt  
 Done.
+
+IMPORTANT NOTE: These tools have no way to measure disk writes. Disk reads are measured on a 1:1 basis, but all writes from RanWrite and RanIO are to the database in memory. As such, the writes are handled by the Write Daemon as always, and the Write Daemon is very efficient. If multiple adjacent blocks on disk are "dirty" (i.e. have been modified since the last Write Daemon cycle), they may be written in a single IOP. Up to 16 blocks can be written together. Due to this, the write IOPS reported by RanWrite and RanIO can be significantly different than the write IOPS reported by mgstat or iostat. This is to be expected, and is part of why the performance should be measured by external tools in addition to the reporting from these tools.
 
 ### Analysis
 
@@ -182,7 +197,7 @@ To find details on any bottlenecks in a system, or if one requires more details 
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">%SYS> set rc=$$addprofile^SystemPerformance("5minhighdef","A 5-minute run sampling every second",1,300)</pre>
 
-Then run that profile (from %SYS) and immediately switch back to USER and start RanRead and/or RanWrite using "job" rather than "do":
+Then run that profile (from %SYS) and immediately switch back to USER and start RanRead and/or RanWrite or RanIO using "job" rather than "do":
 
 <pre style="border: 1px solid rgb(204, 204, 204); padding: 5px 10px; background: rgb(238, 238, 238);">%SYS>set runid=$$run^SystemPerformance("5minhighdef")</pre>
 

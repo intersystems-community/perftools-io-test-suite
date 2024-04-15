@@ -1,0 +1,1252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-09-13 17:44:01">
+<Class name="PerfTools.RanIO">
+<Description>
+This IRIS Data Platform tool persists random read/write storage IO performance statistics for analysis.
+The goal of this tool is to drive as many jobs as possible to achieve target IOPS 
+and ensure acceptable disk response times are also sustained for a given I/O profile.  
+Data is stored by date and time to support queries over time.
+This utility is designed to run in USER.
+For more info run:  do ##class(PerfTools.RanIO).Help()</Description>
+<IncludeCode>%occInclude</IncludeCode>
+<Super>%Persistent</Super>
+<TimeChanged>66730,63609.971612053</TimeChanged>
+<TimeCreated>66588,57334.106888042</TimeCreated>
+
+<Parameter name="EXPORTFILENAME">
+<Default>PerfToolsRanIO_</Default>
+</Parameter>
+
+<Parameter name="FILEEXTENSION">
+<Default>.txt</Default>
+</Parameter>
+
+<Parameter name="DELIM">
+<Expression>$char(44)</Expression>
+</Parameter>
+
+<Parameter name="TIMEDECIMAL">
+<Default>4</Default>
+</Parameter>
+
+<Property name="RunDate">
+<Description>
+Date this run was started
+RunDate and RunTime uniquely identify a run</Description>
+<Type>%Date</Type>
+</Property>
+
+<Property name="RunTime">
+<Description>
+Time this run was started
+RunDate and RunTime uniquely identify a run</Description>
+<Type>%Time</Type>
+</Property>
+
+<Property name="Batch">
+<Description>
+Run number</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Database">
+<Description>
+Database directory used for the random read test</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="Namespace">
+<Description>
+Namespace used for the random write test</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="Processes">
+<Description>
+Number of processes</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Job">
+<Description>
+Job number</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Reads">
+<Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Writes">
+<Description>
+Number of writes</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="ProcTime">
+<Description>
+Worker job runtime</Description>
+<Type>%Time</Type>
+</Property>
+
+<Property name="ResponseTime">
+<Description>
+Response Time in milliseconds</Description>
+<Type>%String</Type>
+</Property>
+
+<Property name="IOPS">
+<Description>
+Calculated IOPS</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="ReadPct">
+<Description>
+Read pct</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Method name="Help">
+<Description>
+Display help</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	#dim str as %String
+	
+	// write display title
+	set str=" - "
+	write !,"do ##class(PerfTools.RanIO).Setup(Directory,DatabaseName,SizeGB,LogLevel)"
+	write !,str_"Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
+	write !,"do ##class(PerfTools.RanIO).CreateGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1," 
+	write !,str_"^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each."
+	write !,"do ##class(PerfTools.RanIO).AddGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates more Globals if needed after the initial creation is done." 
+	write !,str_"NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1"
+	write !,"do ##class(PerfTools.RanIO).CountSubscripts(Directory)"
+	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanIO).GetSizes(Directory)"
+	write !,str_"Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanIO).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms),PctReads)"
+	write !,str_"Run the combined read/write IO test."
+	write !,"do ##class(PerfTools.RanIO).Stop()"
+	write !,str_"Terminates all worker jobs and then the driver."
+	write !,"do ##class(PerfTools.RanIO).Reset()"
+	write !,str_"Deletes statistics of prior runs."
+	write !,"do ##class(PerfTools.RanIO).Purge(Directory)"
+	write !,str_"Deletes namespace and database of the same name."
+	write !,"do ##class(PerfTools.RanIO).Export(Directory)"
+	write !,str_"Exports a summary of all random read test history to comma delimited text file."
+]]></Implementation>
+</Method>
+
+<Method name="Run">
+<Description>
+Run random IO test. </Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Float=2,pReadPct:%Integer=50</FormalSpec>
+<Implementation><![CDATA[
+	
+	#dim tSC as %Status = $$$OK
+	#dim directory,db as %String
+	#dim h,date,time as %String
+	#dim i,batch,maxBlock,currentJobs,IOPS as %Integer
+	#dim respTime as %Double
+	
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				return
+			}
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+			set total = 0
+			if '$data(^RanWriteGlobalCount) {
+				write !, "The variable ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+			set numGlobals = ^RanWriteGlobalCount
+			write !,"Number of Globals is: "_numGlobals 
+
+			if (numGlobals < pProcesses) {
+				write !,"There are insufficient Globals to run "_pProcesses_" jobs."
+				write !,"Please either reduce the number of jobs to "_numGlobals_" or fewer, or run AddGlobals to make up the difference."
+				zn return
+				return
+			}
+
+			for i=1:1:numGlobals {
+				set var = "^RanWriteGlobal"_i_"("_"""Size"""_")"
+				set count = @var
+				//write !,"Number of subscripts in ^RanWriteGlobal"_i_" is: "_count
+				set total = total + count
+ 			}
+			write !,"Total number of subscripts in all globals is: "_total 
+			
+			zn return
+
+			//Get database properties
+			set maxBlock=..GetBlockSize(directory)
+			
+			//Each run is identified by the start date / time to keep related items together.
+			set h=$horolog
+			set date=+h
+			set startTime=$piece(h,",",2)
+			set batch=$increment(^PerfTools.RanIO("BATCH"))
+			
+			write !,"RanIO process ",$JOB," creating "_pProcesses_" worker processes in the background."	
+				
+			//Set run flag to zero - don't start running until all jobs created
+			set ^PerfTools.RanIO("RUNSTATUS")=0
+			
+			//For each process
+			for i=1:1:pProcesses {
+				//Job off separate processes to perform random read test
+				set pre = $ZCHILD
+				job ..RanIOJob(date,startTime,batch,directory,namespace,pProcesses,pRunTime,maxBlock,pTransactionLength,pHang,i,pReadPct)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanIO("JOBLIST",$j,i)=post
+					//w !,"  Prepped RanIOJob ",$ZCHILD," for parent ",$JOB," as element ",i										
+				}
+			}
+				
+			write !,"Starting "_pProcesses_" processes for RanIO job number ",$JOB," now!"
+			//Start all jobs
+			set ^PerfTools.RanIO("RUNSTATUS")=$$$OK
+				
+			write !,"To terminate run:  do ##class(PerfTools.RanIO).Stop()"
+			write !,"Waiting to finish."
+			//Loop while background jobs are running
+			set timer=3
+			do {
+				set currentJobs=..CountJobs()
+				if timer>2 set timer = 0 write "."
+				hang 10
+				set timer = timer + 1
+			} while currentJobs>0
+						
+			write !,"Random IO background jobs finished for parent ",$JOB
+				
+			//Get average response time
+			set respTime=..GetAverageResponseTime(batch)
+			set IOPS=..GetTotalIOPS(batch)
+
+			write !,"RanIO job ",$JOB,"'s ",pProcesses_" processes average response time = "_respTime_"ms"
+			write !,"Calculated IOPS for RanIO job ",$JOB," = "_$number(IOPS,0)
+
+		} else {
+			write !,"ERROR: Directory not valid. See below for parameters."
+			write !,"do ##class(PerfTools.RanIO).Run(Directory,Processes,Count)"
+		}
+		
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+
+	if (^PerfTools.RanIO("RUNSTATUS")='$$$OK) {   // This is what Stop sets it to
+		if ('$SYSTEM.Process.IsProgrammerMode()) {
+			do $zu(4,$j,1) h 0
+		}
+	}
+]]></Implementation>
+</Method>
+
+<Method name="RanIOJob">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pNamespace:%String,pNumProcesses:%Integer,pRunTime:%Integer,pMaxBlocks:%Integer,pTransactionLength:%Integer,pHang:%Float,pJobNum:%Integer,pReadPct:%Integer</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+	
+	#dim db as %String
+	#dim i,numGlobals,total,index,count as %Integer
+	#dim startTime,endTime,respTime,elapseTime as %String
+	
+	try {
+		set home = $NAMESPACE
+		zn pNamespace
+		
+		//Add prefix to database directory 
+		set db="^^"_pDirectory
+		
+		//Loop until ready to go
+		for i=1:1 {
+			//Wait one second
+			hang 1
+			//Exit wait loop when status is ok
+			quit:^[home]PerfTools.RanIO("RUNSTATUS")=$$$OK
+		}
+		
+		set reads = 0
+        set writes = 0
+		set total = 0
+
+		set numGlobals = ^RanWriteGlobalCount
+
+		set global = pJobNum
+		set var = "^RanWriteGlobal"_global_"("_"""Size"""_")"
+		set count = @var
+
+		set startTime=$ztimestamp		
+		set start = $p(startTime,",",2)
+		set end = start + pRunTime
+
+		while (^[home]PerfTools.RanIO("RUNSTATUS")'=0) {
+			Set switch=$random(100)+1
+			if (switch <= pReadPct) {	// This is a read cycle
+				for i=1:1:pTransactionLength {
+					//Open the database using the View Buffer
+					open 63:db
+					//Use the VIEW block form to read in a random block from the database
+					Set pBlockNum=$random(pMaxBlocks)+1  // The +1 brings it to [1,max] rather than [0,max-1]
+					View pBlockNum
+					close 63
+				}
+				set reads = reads + pTransactionLength
+			} else { 				// This is a write cycle
+	   	    	tstart
+				for i=1:1:pTransactionLength {
+					set index = $random(count)+1
+					set var = "^RanWriteGlobal"_global_"("_index_")"
+					set @var = "Updated by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h) ///_" "_loremipsum
+				}
+   	    		tcommit
+				set writes = writes + pTransactionLength
+			}
+			//Exit loop if time is up
+			quit:($p($ztimestamp,",",2) > end)
+    	    //hang pHang/1000  // Input is in milliseconds, hang in seconds
+		    d $zu(136,27,pHang*1000000)  // Input is in milliseconds, $zu command in nanoseconds
+		}
+        set total = reads+writes
+		set endTime=$ztimestamp
+		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
+		set respTime=(elapseTime/total)*1000
+		set respTime=$number(respTime,..#TIMEDECIMAL)
+		
+		zn home
+
+		//Save job info
+		set tObj=..%New()
+		set tObj.RunDate=pDate
+		set tObj.RunTime=pTime
+		set tObj.Batch=pBatch
+		set tObj.Job=pJobNum
+		set tObj.Database=pDirectory
+		set tObj.Namespace=pNamespace
+		set tObj.Reads=reads
+        set tObj.Writes=writes
+		set tObj.ProcTime=elapseTime
+        set tObj.Processes=pNumProcesses
+		set tObj.IOPS=(reads+writes)/elapseTime
+		set tObj.ResponseTime=respTime
+		set tObj.ReadPct=pReadPct
+		
+		$$$TOE(tSC,tObj.%Save())
+			
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+	
+	quit tSC
+]]></Implementation>
+</Method>
+
+<Method name="GetBlockSize">
+<Description>
+Get database block size</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	//Switch to %SYS namespace
+	New $NAMESPACE
+    set $NAMESPACE="%SYS"
+    
+	set db=##Class(SYS.Database).%OpenId(pDirectory)
+	set maxBlock=(db.Size*1024*1024)/db.BlockSize
+	//write !,"Database: "_db.Directory
+			
+	quit maxBlock
+]]></Implementation>
+</Method>
+
+<Query name="ExportSummary">
+<Description>
+SQL Query returns summary </Description>
+<Type>%SQLQuery</Type>
+<SqlQuery>	SELECT RunDate,RunTime,Database,Namespace,
+	{fn ROUND(SUM(Reads),0)} As Reads,
+	{fn ROUND(SUM(Writes),0)} As Writes,
+	Processes,ReadPct,
+	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
+	{fn ROUND(SUM(IOPS),0)} As IOPS
+	FROM PerfTools.RanIO
+	GROUP BY Batch</SqlQuery>
+</Query>
+
+<Method name="Export">
+<Description>
+Export all test history to comma delimited text file</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+		
+	#dim tSC as %Status = $$$OK
+
+	try {
+
+		//Check if directory exists
+		if ##class(%Library.File).DirectoryExists(pDirectory) {
+					
+			set pathFilename=..GetPathFileName(pDirectory)		
+					
+			if pathFilename'=""	{
+				
+				write !,"Exporting summary of all random IO statistics to "_pathFilename
+				
+				//Open file
+				set file = ##class(%File).%New(pathFilename)
+				$$$TOE(tSC,file.Open("WNS"))
+				
+				//Execute SQL query
+				set rs=##class(%ResultSet).%New("PerfTools.RanIO:ExportSummary")
+				$$$TOE(tSC,rs.Execute())
+
+				//Write the headers
+				set colCount=rs.GetColumnCount()
+				for col=1:1:colCount {
+					do file.Write(rs.GetColumnName(col)_..#DELIM)
+					set type(col)=rs.GetColumnType(col)
+				}
+				do file.WriteLine()
+				
+				//Loop through all rows and write out to comma delimited txt file.
+				while rs.Next() {
+					for col=1:1:colCount {
+						
+						//Get field type
+						set type=type(col)
+						set data=rs.GetData(col)
+						if type=2 {  //DATE // region agnostic YYYY-MM-DD format
+							do file.Write($zdate(data,3)_..#DELIM)
+						} else {
+							if type=8 {//TIME// 24 hours HH:MM:SS format
+								do file.Write($ztime(data,1)_..#DELIM)
+							} else {
+								do file.Write(data_..#DELIM)
+							}
+						}
+					}
+					do file.WriteLine()
+				}
+				//Close file
+				do file.Close()
+				
+				write !,"Done."
+			}
+			
+		} else {
+		 	set tSC=$$$ERROR($$$DirectoryNameInvalid,"Directory="_pDirectory)
+		 	do $system.OBJ.DisplayError(tSC)
+		}
+
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+	
+	quit tSC
+]]></Implementation>
+</Method>
+
+<Method name="GetPathFileName">
+<Description>
+Get full directory filename for export summary txt file.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String</FormalSpec>
+<ReturnType>%String</ReturnType>
+<Implementation><![CDATA[
+	//Normalize directory
+	set directory=##class(%Library.File).NormalizeDirectory(pDirectory)		
+	//Get filename
+	set h=$horolog
+	//Get date in format yyyymmdd
+	set date=$zdatetime(+h,8)
+	//Get time in format hhdd
+	set time=$replace($ztime($piece(h,",",2),2),":","")
+	set filename=..#EXPORTFILENAME_date_"-"_time_..#FILEEXTENSION
+	set pathFilename=##class(%File).NormalizeFilename(filename,directory)
+	
+	quit pathFilename
+]]></Implementation>
+</Method>
+
+<Method name="GetAverageResponseTime">
+<Description>
+Return average response time for specified batch run</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim avgTime as %Double = 0
+	
+	//Get average response time
+	&sql(SELECT AVG(ResponseTime) 
+		INTO :avgTime
+		FROM PerfTools.RanIO
+		WHERE Batch=:pBatch)
+	
+	set avgTime=$number(avgTime,..#TIMEDECIMAL)	
+	
+	quit avgTime
+]]></Implementation>
+</Method>
+
+<Method name="GetTotalIOPS">
+<Description>
+Return total IOPS for specified batch run</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total IOPS 
+	&sql(SELECT SUM(IOPS) 
+		INTO :total
+		FROM PerfTools.RanIO
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
+<Method name="CountJobs">
+<Description>
+Return number of background jobs running</Description>
+<ClassMethod>1</ClassMethod>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[
+	#dim job as %Integer
+	#dim jobCount as %Integer = 0
+	
+	set key=$ORDER(^PerfTools.RanIO("JOBLIST",$j,""))
+	while (key'="") {
+		if ($DATA(^$JOB(^PerfTools.RanIO("JOBLIST",$j,key)))=1) {
+			set jobCount = jobCount + 1
+			//w !,"Job ",^PerfTools.RanIO("JOBLIST",$j,key)," still exists"
+		} else {
+			//w !,"Killing job ",^PerfTools.RanIO("JOBLIST",$j,key)
+			kill ^PerfTools.RanIO("JOBLIST",$j,key)
+		}
+		set key=$ORDER(^PerfTools.RanIO("JOBLIST",$j,key))
+	}
+
+   	quit jobCount
+]]></Implementation>
+</Method>
+
+<Method name="Setup">
+<Description>
+Create database and namespace for random read test</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>Directory:%String,Name:%String="ZRanIO",sizeGB:%Integer=1,pLogLevel:%Integer=1</FormalSpec>
+<Implementation><![CDATA[
+
+ 	#dim tSC as %Status = $$$OK
+ 	#dim directory,freeSpace,totalSpace as %String = ""
+ 	#dim dbObj as %ObjectHandle
+
+ 	if $g(Name)="" quit 0
+	set tSC=$$$OK
+
+	Try {
+		set currNS=$namespace
+		zn "%SYS"
+ 		
+		Set Directory = $zstrip(Directory,"<>W")
+		set directory=##class(%File).NormalizeDirectory(Directory)
+
+ 		//create resource
+ 		set Resource="%DB_"_Name
+ 		if ##class(Security.Resources).Exists(Resource)=0 {
+	 		set tSC=##class(Security.Resources).Create(Resource,"resource for "_Name,0,2)
+			If $$$ISERR(tSC) {
+				Set msg = Resource_": "_"Could not create this resource."
+				Set tSC = $$$ERROR($$$ObjectScriptError,msg)
+				Throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+			}
+ 		}
+
+		if ##class(Config.Databases).Exists(Name,.oref)=1 {
+		    set dir=$zconvert(directory,"L")
+			if $zconvert(oref.Directory,"L")'=dir  {
+				Set msg = Name_": "_"Database already exists but with different directory"
+				Set tSC = $$$ERROR($$$ObjectScriptError,msg)
+				throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+			}
+		}
+		else {
+			//create directory for the DB
+	 		set tSC = ..SetupDatabaseDirectory(directory,Name)
+			If $$$ISERR(tSC) {
+				Set msg = Directory_": "_"Could not create this directory. Please check the directory and try again."
+				Set tSC = $$$ERROR($$$ObjectScriptError,msg)
+				Throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+			} 	
+
+			//Convert GB to MB
+			set sizeMB=sizeGB*1024
+
+			//Get availble free disk space in GB
+			$$$TOE(tSC,##class(%Library.File).GetDirectorySpace(directory,.freeSpace,.totalSpace,2))
+
+			if freeSpace<sizeGB {
+				write !,"ERROR: Database size ("_sizeGB_"GB) cannot be greater than available freeSpace ("_freeSpace_"GB)"
+				return
+			}
+
+			//create the pre-expanded DB
+			write !,"Creating "_sizeGB_"GB database in "_directory
+			set dbObj=##Class(SYS.Database).%New()
+			set dbObj.Directory=directory
+			set dbObj.Size=sizeMB
+			$$$TOE(tSC,dbObj.%Save())
+			If $$$ISERR(tSC) throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+			write !,"Database created in "_directory
+
+			//update cpf with DB
+			Set Properties("Directory") = Directory
+			Set tSC =##class(Config.Databases).Create(Name,.Properties)
+			If $$$ISERR(tSC) throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+		}
+		//mount the db
+		set tSC= ##class(SYS.Database).MountDatabase(Directory)
+		If $$$ISERR(tSC) {
+			kill err
+			if $system.Status.GetErrorText(tSC)="ERROR #19: the file was already mounted" {
+				set tSC=1
+			}
+			else {
+				Throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+			}
+		}
+		Set nsProperties("Globals") = Name
+		Set nsProperties("Library") = "IRISLIB"
+		Set nsProperties("Routines") = Name
+		Set nsProperties("SysGlobals") = "IRISSYS"
+		Set nsProperties("SysRoutines") = "IRISSYS"
+		Set nsProperties("TempGlobals") = "IRISTEMP"
+		Set tSC = ##Class(Config.Namespaces).Create(Name,.nsProperties)
+		if $system.Status.GetErrorText(tSC)="ERROR #419: Namespace ABCF already exists" set tSC=1
+		If $$$ISERR(tSC) throw ##Class(%Exception.StatusException).CreateFromStatus(tSC)
+		zn currNS
+	}
+	catch exp {
+		zn currNS
+		use 0 write !, exp.Name
+	}
+	zn currNS
+	quit tSC
+]]></Implementation>
+</Method>
+
+<Method name="CreateGlobals">
+<Description>
+Pre-create a few top-level globals with some number of pre-existing subscripts</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String="",pNumGlobals:%Integer=5,pNumSubscripts:%Integer=1000000</FormalSpec>
+<Implementation><![CDATA[
+	#dim directory,db as %String
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			write !,"Starting global creation",!
+			//For each global, job off a separate process to create it
+			for i=1:1:pNumGlobals {
+				set pre = $ZCHILD
+				job ..CreateGlobalsMain(namespace,i,pNumSubscripts)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanIO("JOBLIST",$j,i)=post
+				}
+			}
+
+			//Loop while background jobs are running
+			set timer=6
+			do {
+				set currentJobs=..CountJobs()
+				if timer>5 set timer = 0 write "."
+				hang 10
+				set timer = timer + 1
+			} while currentJobs>0
+
+			zn namespace
+			set ^RanWriteGlobalCount=pNumGlobals			
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="AddGlobals">
+<Description>
+Pre-create a few top-level globals with some number of pre-existing subscripts</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String="",pNumGlobals:%Integer=5,pNumSubscripts:%Integer=0</FormalSpec>
+<Implementation><![CDATA[
+	#dim directory,db as %String
+	#dim numGlobals,numSubscripts as %Integer
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write "Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			if '$data(^RanWriteGlobalCount) {
+				write "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+
+			set numGlobals = ^RanWriteGlobalCount
+
+			if (numGlobals >= pNumGlobals) {
+				write "There are already "_numGlobals_" Globals present."
+				zn return
+				return
+			}
+
+			set diff = pNumGlobals - numGlobals
+			write "Filling "_diff_" new Globals, starting with number "_(numGlobals+1)
+
+			set numSubscripts = pNumSubscripts
+			if (numSubscripts = 0) {
+				set numSubscripts = $number(^RanWriteGlobal1("Size"))
+			}
+			write !,"Number of subscripts is "_numSubscripts
+
+			zn return
+			
+			write !,"Starting global creation",!
+			//For each global, job off a separate process to create it
+			for i=numGlobals+1:1:pNumGlobals {
+				set pre = $ZCHILD
+				job ..CreateGlobalsMain(namespace,i,numSubscripts)
+				set post = $ZCHILD
+				if (pre'=post) {
+					set ^PerfTools.RanIO("JOBLIST",$j,i)=post
+				}
+			}
+
+			//Loop while background jobs are running
+			set timer=6
+			do {
+				set currentJobs=..CountJobs()
+				if timer>5 set timer = 0 write "."
+				hang 10
+				set timer = timer + 1
+			} while currentJobs>0
+
+			zn namespace
+			set ^RanWriteGlobalCount=pNumGlobals			
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="CreateGlobalsMain">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pNameSpace:%String,pGlobal:%Integer,pNumSubscripts:%Integer</FormalSpec>
+<Implementation><![CDATA[
+	zn pNameSpace
+
+	set var = "^RanWriteGlobal"_pGlobal
+	if ($data(@var)) {
+		kill @var
+	}
+	set @var="Created by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h)
+	// Create initial subscripts
+	for index=1:1:pNumSubscripts {
+		set location = var_"("_index_")"
+		set @location = "Created by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h)
+	}
+	set location = var_"("_"""Size"""_")"
+	set @location = pNumSubscripts
+]]></Implementation>
+</Method>
+
+<Method name="CountSubscripts">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String=""</FormalSpec>
+<Implementation><![CDATA[
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				return
+			}
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			set total = 0
+
+			if '$data(^RanWriteGlobalCount) {
+				write !, "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+
+			set numGlobals = ^RanWriteGlobalCount
+			write !,"Number of Globals is: "_numGlobals 
+
+			for i=1:1:numGlobals {
+				set count = 0
+				set start = "^RanWriteGlobal"_i_"("_""""""_")"
+				set key=$ORDER(@start)
+				while (key'="") {
+     				// Get next subscript 
+					if (key'="Size"){
+						set location="^RanWriteGlobal"_i_"("_key_")"
+					} else {
+						set location="^RanWriteGlobal"_i_"("_"""Size"""_")"					
+					}
+	 				set key = $ORDER(@location)
+					set count = count + 1
+				}
+				// Return one fewer than the counted total because the "Size" variable also exists
+				write !,"Number of subscripts in ^RanWriteGlobal"_i_" is: "_(count-1) 
+				set total = total + (count - 1)
+ 			}
+			write !,"Number of subscripts in all globals is: "_total 
+
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="GetSizes">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String=""</FormalSpec>
+<Implementation><![CDATA[
+	#dim directory,db as %String
+
+	try {
+		//Normalize directory
+		set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+		//Check if database exists
+		if ..IsValidDatabaseDir(directory)  {
+			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				zn return
+				return
+			}
+
+			zn return
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn namespace
+
+			if '$data(^RanWriteGlobalCount) {
+				write !, "The global ^RanWriteGlobalCount is not present in the chosen database.",!,"Make sure you have run the CreateGlobals function prior to Run."
+				zn return
+				return
+			}
+			set numGlobals = ^RanWriteGlobalCount
+			write !,numGlobals 
+
+			for i=1:1:numGlobals {
+				set var = "^RanWriteGlobal"_i
+				if ($data(@var)) {
+					set var = "^RanWriteGlobal"_i_"("_"""Size"""_")"
+					w ","_@var
+				}
+				else {
+					w ",NA"
+				}
+			}
+
+			zn return
+		}
+	} catch errObj {
+		set tSC = errObj.AsStatus()
+		do errObj.Log()
+		do $system.OBJ.DisplayError(tSC)
+	}
+]]></Implementation>
+</Method>
+
+<Method name="Purge">
+<Description>
+Delete database and namespace for random write test</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String,pDBname:%String="ZRanIO"</FormalSpec>
+<Implementation><![CDATA[
+ 	
+ 	#dim directory,dbName as %String = ""
+	#dim dbObj as %ObjectHandle
+
+	//Switch to %SYS namespace
+	New $NAMESPACE
+    set $NAMESPACE="%SYS"
+
+	//Normalize directory
+	set directory=##class(%Library.File).NormalizeDirectory(pDirectory)
+
+	//Convert database name to UPPER case
+	set dbName=$zconvert(pDBname,"U")
+
+	//Check if directory exists
+	if '(##class(%Library.File).DirectoryExists(directory))  {
+		w !,"Error: Directory "_directory_" does not exist!"
+		quit
+	}
+	
+	//Check if database exists
+	if '(##Class(Config.Databases).Exists(dbName,.dbObj)) {
+		w !,"Error: Database "_dbName_" does not exist!"
+		quit
+	}
+
+	try {
+		set Status=##Class(SYS.Database).DismountDatabase(directory)
+		if '$$$ISOK(Status) {
+			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+			return
+		}
+
+		set Status=##Class(SYS.Database).DeleteDatabase(directory)
+		if '$$$ISOK(Status) {
+			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+			return
+		}
+
+		set Status=##Class(Config.Namespaces).Delete(dbName)
+		if '$$$ISOK(Status) {
+			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+			return
+		}
+
+		set Status=##Class(Config.Databases).Delete(dbName)
+		if '$$$ISOK(Status) {
+			write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+			return
+		}
+
+		set args=2
+		set args(1)="-Rf"
+		set args(2)=directory
+		do $ZF(-100,"","rm",.args)
+	} 
+    catch {}
+]]></Implementation>
+</Method>
+
+<Method name="IsValidDatabaseDir">
+<Description>
+Return true if database directory is valid</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String</FormalSpec>
+<ReturnType>%Boolean</ReturnType>
+<Implementation><![CDATA[
+	#dim found as %Boolean = '$$$OK
+	#dim dbDir as %String
+	#dim rs as %ObjectHandle
+	
+	//Switch to %SYS namespace
+	New $NAMESPACE
+    set $NAMESPACE="%SYS"
+    
+	//If directory exists
+	if ##class(%Library.File).DirectoryExists(pDirectory) {
+		//Loop through all databases
+		set rs=##class(%Library.ResultSet).%New("Config.Databases:LocalDatabaseList")
+		do rs.Execute("*")
+		while rs.Next() {
+			set dbDir=rs.Data("Directory")
+			set dbDir=##class(%Library.File).NormalizeDirectory(dbDir)
+			//If directory exists
+			if pDirectory=dbDir {
+				set found=$$$OK
+				quit
+			}
+		}
+	}
+
+	quit found
+]]></Implementation>
+</Method>
+
+<Method name="SetupDatabaseDirectory">
+<Description>
+Create database directory if it doesn't exist then check if a database already exists.</Description>
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pDirectory:%String,pName:%String</FormalSpec>
+<ReturnType>%Boolean</ReturnType>
+<Implementation><![CDATA[
+	#dim directoryOK as %Boolean = $$$OK
+	#dim objDB as %Object = ""
+
+	if ##class(Config.DBName).IsValid(pName) {
+
+		//If directory exists
+		if ##class(%Library.File).DirectoryExists(pDirectory)  {
+			 
+			//Check if database exists
+			if ##Class(Config.Databases).Exists(pName,.objDB) {
+				write !,"ERROR: Database already exists."
+				set directoryOK='$$$OK
+			}
+		
+		} else {
+			//Create directory
+			if ##class(%Library.File).CreateDirectoryChain(pDirectory) {
+				write !,"Created directory "_pDirectory
+			} else {
+				write !,"ERROR: Could not create directory."
+				set directoryOK='$$$OK
+			}
+		}
+	} else {
+		write !,"ERROR: Database name is invalid."
+		set directoryOK='$$$OK	
+	}
+	quit directoryOK
+]]></Implementation>
+</Method>
+
+<Method name="Stop">
+<Description>
+Set the stop flag to terminate all background jobs.</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[	set ^PerfTools.RanIO("RUNSTATUS")=0
+]]></Implementation>
+</Method>
+
+<Method name="Reset">
+<Description>
+Delete all RanIO data</Description>
+<ClassMethod>1</ClassMethod>
+<Implementation><![CDATA[
+	kill ^PerfTools.RanIOD
+	kill ^PerfTools.RanIO
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Storage.Persistent</Type>
+<DataLocation>^PerfTools.RanIOD</DataLocation>
+<DefaultData>RanIODefaultData</DefaultData>
+<IdLocation>^PerfTools.RanIOD</IdLocation>
+<IndexLocation>^PerfTools.RanIOI</IndexLocation>
+<StreamLocation>^PerfTools.RanIOS</StreamLocation>
+<ExtentSize>10</ExtentSize>
+<Data name="RanIODefaultData">
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>RunDate</Value>
+</Value>
+<Value name="3">
+<Value>RunTime</Value>
+</Value>
+<Value name="4">
+<Value>Batch</Value>
+</Value>
+<Value name="5">
+<Value>Database</Value>
+</Value>
+<Value name="6">
+<Value>Namespace</Value>
+</Value>
+<Value name="7">
+<Value>Processes</Value>
+</Value>
+<Value name="8">
+<Value>Job</Value>
+</Value>
+<Value name="9">
+<Value>Reads</Value>
+</Value>
+<Value name="10">
+<Value>Writes</Value>
+</Value>
+<Value name="11">
+<Value>ProcTime</Value>
+</Value>
+<Value name="12">
+<Value>ResponseTime</Value>
+</Value>
+<Value name="13">
+<Value>IOPS</Value>
+</Value>
+<Value name="14">
+<Value>ReadPct</Value>
+</Value>
+</Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="Batch">
+<Selectivity>50.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="Database">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>21</AverageFieldSize>
+</Property>
+<Property name="IOPS">
+<Selectivity>10.0000%</Selectivity>
+<AverageFieldSize>5</AverageFieldSize>
+</Property>
+<Property name="Job">
+<Selectivity>20.0000%</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<Property name="ProcTime">
+<Selectivity>10.0000%</Selectivity>
+<AverageFieldSize>8</AverageFieldSize>
+</Property>
+<Property name="Processes">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="Reads">
+<Selectivity>10.0000%</Selectivity>
+<AverageFieldSize>5</AverageFieldSize>
+</Property>
+<Property name="ResponseTime">
+<Selectivity>33.3333%</Selectivity>
+<AverageFieldSize>4</AverageFieldSize>
+</Property>
+<Property name="RunDate">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>5</AverageFieldSize>
+</Property>
+<Property name="RunTime">
+<Selectivity>10.0000%</Selectivity>
+<AverageFieldSize>8</AverageFieldSize>
+</Property>
+<Property name="Writes">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-4</BlockCount>
+</SQLMap>
+</Storage>
+</Class>
+</Export>
