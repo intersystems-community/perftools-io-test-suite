@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-07-25 19:37:42">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for ARM64 Containers) 2024.1 (Build 263U)" ts="2024-05-03 20:11:39">
 <Class name="PerfTools.RanWrite">
 <Description><![CDATA[
 Random write test
@@ -8,7 +8,7 @@ There is a tstart and tcommit around each set, so to test journal synchs on ECP 
  
 ranwrite uses very little CPU (<1%) so could be run with RANREAD for a r/w smoke test. Adjust the pacing for the expected load.]]></Description>
 <Super>%Persistent</Super>
-<TimeChanged>66680,70631.953117213</TimeChanged>
+<TimeChanged>66963,72584.178341343</TimeChanged>
 <TimeCreated>65488,66744.147036</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -47,6 +47,12 @@ Run number</Description>
 <Type>%Integer</Type>
 </Property>
 
+<Property name="Database">
+<Description>
+Database directory used for the random read test</Description>
+<Type>%String</Type>
+</Property>
+
 <Property name="Namespace">
 <Description>
 Namespace used for the random write test</Description>
@@ -65,9 +71,27 @@ Job number</Description>
 <Type>%Integer</Type>
 </Property>
 
-<Property name="Iterations">
+<Property name="Reads">
 <Description>
-Number of iterations</Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Writes">
+<Description>
+Number of writes</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="ReadsPerSec">
+<Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="WritesPerSec">
+<Description>
+Number of writes</Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -77,15 +101,9 @@ Worker job runtime</Description>
 <Type>%Time</Type>
 </Property>
 
-<Property name="ResponseTime">
+<Property name="ReadPct">
 <Description>
-Response Time in milliseconds</Description>
-<Type>%String</Type>
-</Property>
-
-<Property name="IOPS">
-<Description>
-Calculated IOPS</Description>
+Read pct</Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -360,7 +378,7 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 			set namespace=$zconvert(dblist,"U")
 			set namespace=$zstrip(namespace,"<>WPC")
 
-			write "Starting global creation",!
+			write "Starting global creation."
 			//For each global, job off a separate process to create it
 			for i=1:1:pNumGlobals {
 				set pre = $ZCHILD
@@ -372,11 +390,11 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 			}
 
 			//Loop while background jobs are running
-			set timer=6
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
-				if timer>5 set timer = 0 write "."
-				hang 10
+				if timer>29 set timer = 0 write "."
+				hang 1
 				set timer = timer + 1
 			} while currentJobs>0
 
@@ -452,7 +470,7 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 
 			zn return
 			
-			write !,"Starting global creation",!
+			write !,"Starting global creation."
 			//For each global, job off a separate process to create it
 			for i=numGlobals+1:1:pNumGlobals {
 				set pre = $ZCHILD
@@ -464,11 +482,11 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 			}
 
 			//Loop while background jobs are running
-			set timer=6
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
-				if timer>5 set timer = 0 write "."
-				hang 10
+				if timer>29 set timer = 0 write "."
+				hang 1
 				set timer = timer + 1
 			} while currentJobs>0
 
@@ -646,7 +664,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 	#dim tSC as %Status = $$$OK
 	#dim directory,db as %String
 	#dim h,date,time as %String
-	#dim i,batch,currentJobs,IOPS as %Integer
+	#dim i,batch,currentJobs as %Integer
 	#dim respTime as %Double
 	
 	try {
@@ -713,7 +731,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 			for i=1:1:pProcesses {
 				//Job off separate processes to perform random write test
 				set pre = $ZCHILD
-			    job ..RanWriteJob(date,time,batch,namespace,pRunTime,pTransactionLength,pHang,i,pProcesses)
+			    job ..RanWriteJob(date,time,batch,directory,namespace,pRunTime,pTransactionLength,pHang,i,pProcesses)
 				set post = $ZCHILD
 				if (pre'=post) {
 					set ^PerfTools.RanWrite("JOBLIST",$j,i)=post
@@ -721,28 +739,28 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 				}
 			}
 				
-			write !,"Starting "_pProcesses_" processes for RanWrite job number ",$JOB," now!"
+			write !,"Starting "_pProcesses_" processes for RanWrite job number ",$JOB
 			//Start all jobs
 			set ^PerfTools.RanWrite("RUNSTATUS")=$$$OK /// This sets it to 1
 				
 			write !,"To terminate run:  do ##class(PerfTools.RanWrite).Stop()"
 			write !,"Waiting to finish."
 			//Loop while background jobs are running
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
+				if timer>29 set timer = 0 write "."
 				hang 1
-				write "."
+				set timer = timer + 1
 			} while currentJobs>0
 						
 			write !,"Random write background jobs finished for parent ",$JOB
 			
-			//Get average response time and IOPS
-			set respTime=..GetAverageResponseTime(batch)
-			set IOPS=..GetTotalIOPS(batch)
+			//Get totals
+			set WPS=..GetTotalWritesPerSec(batch)
 
-			write !,"RanWrite job ",$JOB,"'s ",pProcesses_" processes ("_pRunTime_" seconds) had average response time = "_respTime_"ms"
-			write !,"Calculated IOPS for RanWrite job ",$JOB," = "_$number(IOPS,0)
-							
+			write !,"RanWrite job ",$JOB,"'s ",pProcesses_" processes total total writes/s = "_WPS
+
 		} else {
 			write !,"ERROR: Directory not valid. Call the following for help:"
 			write !,"do ##class(PerfTools.RanWrite).Help()"
@@ -764,13 +782,13 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 
 <Method name="RanWriteJob">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pNamespace:%String,pRunTime:%Integer,pTransactionLength:%Integer,pHang:%Float,pJobNum:%Integer,pNumProcesses:%Integer</FormalSpec>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pNamespace:%String,pRunTime:%Integer,pTransactionLength:%Integer,pHang:%Float,pJobNum:%Integer,pNumProcesses:%Integer</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
 	
 	#dim db as %String
 	#dim i,numGlobals,total,index,count as %Integer
-	#dim startTime,endTime,respTime,elapseTime as %String
+	#dim startTime,endTime,elapseTime as %String
 
 	try {
 		set home = $NAMESPACE
@@ -784,7 +802,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 			quit:^[home]PerfTools.RanWrite("RUNSTATUS")=$$$OK
 		}
 
-		set total = 0
+		set writes = 0
 		set numGlobals = ^RanWriteGlobalCount
 
 		set startTime=$ztimestamp
@@ -806,7 +824,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 				set @var = "Updated by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h) ///_" "_loremipsum
 			}
    	    	tcommit
-			set total = total + pTransactionLength
+			set writes = writes + pTransactionLength
     	
 		    //hang pHang/1000  // Input is in milliseconds, hang in seconds
 		    d $zu(136,27,pHang*1000000)  // Input is in milliseconds, $zu command in nanoseconds
@@ -816,8 +834,6 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 		}
 		set endTime=$ztimestamp
 		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
-		set respTime=(elapseTime/total)*1000  // %The multiplier is so that it's in milliseconds for readibility
-		set respTime=$number(respTime,..#TIMEDECIMAL)
 
 		zn home
 
@@ -827,12 +843,13 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 		set tObj.RunTime=pTime
 		set tObj.Batch=pBatch
 		set tObj.Job=pJobNum
+		set tObj.Database=pDirectory
 		set tObj.Namespace=pNamespace
-		set tObj.Iterations=total
+        set tObj.Writes=writes
+		set tObj.WritesPerSec=writes/elapseTime
 		set tObj.ProcTime=elapseTime
-		set tObj.Processes=pNumProcesses
-		set tObj.ResponseTime=respTime
-		set tObj.IOPS=total/elapseTime
+        set tObj.Processes=pNumProcesses
+		set tObj.ReadPct=0
 		
 		$$$TOE(tSC,tObj.%Save())
 			
@@ -849,9 +866,14 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 <Description>
 SQL Query returns summary </Description>
 <Type>%SQLQuery</Type>
-<SqlQuery>	SELECT RunDate,RunTime,Namespace,Iterations,Processes,
-	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
-	{fn ROUND(SUM(IOPS),0)} As IOPS
+<SqlQuery>	SELECT RunDate,RunTime,Database,Namespace,
+	{fn ROUND(SUM(Reads),0)} As Reads,
+	{fn ROUND(SUM(Writes),0)} As Writes,
+	{fn ROUND(SUM(ReadsPerSec),0)} As "ReadsPS",
+	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
+	{fn ROUND(STDDEV_POP(Reads),3)} As "StdDevR",
+	{fn ROUND(STDDEV_POP(Writes)/AVG(Writes),3)} As "StdDevW",  
+	Processes,ReadPct
 	FROM PerfTools.RanWrite
 	GROUP BY Batch</SqlQuery>
 </Query>
@@ -955,38 +977,17 @@ Get full directory filename for export summary txt file.</Description>
 ]]></Implementation>
 </Method>
 
-<Method name="GetAverageResponseTime">
+<Method name="GetTotalWritesPerSec">
 <Description>
-Return average response time for specified batch run</Description>
-<ClassMethod>1</ClassMethod>
-<FormalSpec>pBatch:%Integer</FormalSpec>
-<ReturnType>%Double</ReturnType>
-<Implementation><![CDATA[
-	#dim avgTime as %Double = 0
-	
-	//Get average response time 
-	&sql(SELECT AVG(ResponseTime) 
-		INTO :avgTime
-		FROM PerfTools.RanWrite
-		WHERE Batch=:pBatch)
-	
-	set avgTime=$number(avgTime,..#TIMEDECIMAL)	
-	
-	quit avgTime
-]]></Implementation>
-</Method>
-
-<Method name="GetTotalIOPS">
-<Description>
-Return total IOPS for specified batch run</Description>
+Return total Writes/sec for specified batch run</Description>
 <ClassMethod>1</ClassMethod>
 <FormalSpec>pBatch:%Integer</FormalSpec>
 <ReturnType>%Double</ReturnType>
 <Implementation><![CDATA[
 	#dim total as %Integer = 0
 	
-	//Get total IOPS 
-	&sql(SELECT SUM(IOPS) 
+	//Get total RPS 
+	&sql(SELECT SUM(WritesPerSec) 
 		INTO :total
 		FROM PerfTools.RanWrite
 		WHERE Batch=:pBatch)
@@ -1061,7 +1062,7 @@ Delete all RanWrite data</Description>
 <IdLocation>^PerfTools.RanWriteD</IdLocation>
 <IndexLocation>^PerfTools.RanWriteI</IndexLocation>
 <StreamLocation>^PerfTools.RanWriteS</StreamLocation>
-<ExtentSize>40</ExtentSize>
+<ExtentSize>10</ExtentSize>
 <Data name="RanWriteDefaultData">
 <Value name="1">
 <Value>%%CLASSNAME</Value>
@@ -1073,97 +1074,46 @@ Delete all RanWrite data</Description>
 <Value>RunTime</Value>
 </Value>
 <Value name="4">
-<Value>DatabasePath</Value>
-</Value>
-<Value name="5">
-<Value>Processes</Value>
-</Value>
-<Value name="6">
-<Value>Iterations</Value>
-</Value>
-<Value name="7">
-<Value>DatabaseDirectory</Value>
-</Value>
-<Value name="8">
-<Value>ResponseTime</Value>
-</Value>
-<Value name="9">
-<Value>RunID</Value>
-</Value>
-<Value name="10">
 <Value>Batch</Value>
 </Value>
-<Value name="11">
+<Value name="5">
 <Value>Database</Value>
 </Value>
-<Value name="12">
-<Value>Job</Value>
-</Value>
-<Value name="13">
-<Value>IOPS</Value>
-</Value>
-<Value name="14">
+<Value name="6">
 <Value>Namespace</Value>
 </Value>
-<Value name="15">
+<Value name="7">
+<Value>Processes</Value>
+</Value>
+<Value name="8">
+<Value>Job</Value>
+</Value>
+<Value name="9">
+<Value>Reads</Value>
+</Value>
+<Value name="10">
+<Value>Writes</Value>
+</Value>
+<Value name="11">
+<Value>ReadsPerSec</Value>
+</Value>
+<Value name="12">
+<Value>WritesPerSec</Value>
+</Value>
+<Value name="13">
 <Value>ProcTime</Value>
+</Value>
+<Value name="14">
+<Value>ReadPct</Value>
 </Value>
 </Data>
 <Property name="%%CLASSNAME">
 <Selectivity>100.0000%</Selectivity>
 <AverageFieldSize>2</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,0,16,$lb("-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000","-10000000000000000000"),$lb(21,21,21,21,21,21,21,21,21,21,21,21,21,21,21),$lb(758198320,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,758198320))</Histogram>
 </Property>
 <Property name="%%ID">
 <Selectivity>1</Selectivity>
 <AverageFieldSize>3</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(1,3,6,9,12,15,18,21,24,27,30,32,34,36,38,40),$lb(0,0,0,0,1,1,0,1,1,0,1,1,1,1,0),$lb(822083584,822083584,855638016,855638016,905969664,905969664,956301312,956301312,825360384,838860800,889192448,889192448,939524096,825753600,842072064,822083584,872415232,872415232,922746880,842465280,858783744,805306368,838860800,838860800,872415232,872415232,905969664,905969664,939524096,859308032,875560960,875560960))</Histogram>
-</Property>
-<Property name="Batch">
-<Selectivity>12.5000%</Selectivity>
-<AverageFieldSize>3</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(1,1,2,2,3,3,4,6,6,7,7,8,8,9,9,9),$lb(1,0,1,0,1,0,0,1,0,1,0,1,0,1,1),$lb(822083584,0,0,822083584,838860800,0,0,838860800,855638016,0,0,855638016,872415232,872415232,905969664,0,0,905969664,922746880,0,0,922746880,939524096,0,0,939524096,956301312,0,0,0,0,956301312))</Histogram>
-</Property>
-<Property name="IOPS">
-<Selectivity>14.2857%</Selectivity>
-<AverageFieldSize>3.25</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(19,19,19,29,29,29,29,35,53,53,53,58823,58823,58823,58823,58823),$lb(2,2,0,2,2,2,0,0,2,2,1,5,5,5,5),$lb(825819136,0,0,0,0,825819136,842596352,0,0,0,0,0,0,842596352,859111424,859111424,892534784,0,0,0,0,855638016,943206963,0,0,0,0,0,0,0,0,892876850))</Histogram>
-</Property>
-<Property name="Iterations">
-<Selectivity>7.1429%</Selectivity>
-<AverageFieldSize>3.73</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(30,30,30,60,60,60,60,90,540,540,540,286800,288570,289980,291450,292320),$lb(2,2,0,2,2,2,0,0,3,3,0,2,2,1,2),$lb(858783744,0,0,0,0,858783744,909115392,0,0,0,0,0,0,909115392,959447040,959447040,892612608,0,0,0,0,892612608,842544696,909652016,943011632,943011632,960051248,943274296,959525941,825505072,842215984,842609203))</Histogram>
-</Property>
-<Property name="Job">
-<Selectivity>20.0000%</Selectivity>
-<AverageFieldSize>3</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(1,1,1,2,2,2,3,3,3,4,4,4,5,5,5,5),$lb(1,1,0,1,1,0,1,1,0,1,1,0,1,1,1),$lb(822083584,0,0,0,0,822083584,838860800,0,0,0,0,838860800,855638016,0,0,0,0,855638016,872415232,0,0,0,0,872415232,889192448,0,0,0,0,0,0,889192448))</Histogram>
-</Property>
-<Property name="Namespace">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>5</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,0,0,$lb(" RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"," RAN"),$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(542261582,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,542261582))</Histogram>
-</Property>
-<Property name="Processes">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>3</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1),$lb(889192448,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,889192448))</Histogram>
-</Property>
-<Property name="ResponseTime">
-<Selectivity>2.5833%</Selectivity>
-<OutlierSelectivity>.225:.017</OutlierSelectivity>
-<AverageFieldSize>4.75</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,0,0,$lb(" .017"," .017"," .017"," .017"," 18.634"," 18.716"," 18.874"," 28.175"," 33.606"," 33.666"," 33.686"," 34.111"," 50.46"," 50.545"," 50.717"," 50.991"),$lb(6,6,6,1,4,4,1,1,5,5,2,1,4,4,4),$lb(539897905,0,0,0,0,0,0,774910263,825765430,909325312,925971968,925971968,943141888,825765432,842542641,842542641,858992182,808845312,909508608,909508608,943063040,858666552,875442481,859057713,892350004,875954176,892613888,892613888,925972224,925972224,960049408,540356654))</Histogram>
-</Property>
-<Property name="RunDate">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>5</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627,66627),$lb(5,5,5,5,5,5,5,5,5,5,5,5,5,5,5),$lb(909522482,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,909522482))</Histogram>
-</Property>
-<Property name="RunTime">
-<Selectivity>12.5000%</Selectivity>
-<AverageFieldSize>4</AverageFieldSize>
-<Histogram>$lb(.06666666666666666667,1,0,$lb(55595,55595,55611,55611,55627,55627,56791,56854,56854,56856,56856,56919,56919,56922,56922,56922),$lb(5,2,5,3,5,1,2,5,4,5,2,5,3,5,5),$lb(892679481,0,0,892941568,909193472,0,0,825294848,842465280,0,0,892744247,909588785,926494976,943010816,0,0,872415232,905969664,0,0,943011328,959527168,0,0,825819136,842137600,0,0,0,0,892746034))</Histogram>
 </Property>
 <SQLMap name="IDKEY">
 <BlockCount>-4</BlockCount>

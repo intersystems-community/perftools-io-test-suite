@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-09-13 17:44:01">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for ARM64 Containers) 2024.1 (Build 263U)" ts="2024-05-02 19:06:43">
 <Class name="PerfTools.RanIO">
 <Description>
 This IRIS Data Platform tool persists random read/write storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanIO).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>66730,63609.971612053</TimeChanged>
+<TimeChanged>66962,68776.171052544</TimeChanged>
 <TimeCreated>66588,57334.106888042</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -85,22 +85,22 @@ Number of writes</Description>
 <Type>%Integer</Type>
 </Property>
 
+<Property name="ReadsPerSec">
+<Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="WritesPerSec">
+<Description>
+Number of writes</Description>
+<Type>%Integer</Type>
+</Property>
+
 <Property name="ProcTime">
 <Description>
 Worker job runtime</Description>
 <Type>%Time</Type>
-</Property>
-
-<Property name="ResponseTime">
-<Description>
-Response Time in milliseconds</Description>
-<Type>%String</Type>
-</Property>
-
-<Property name="IOPS">
-<Description>
-Calculated IOPS</Description>
-<Type>%Integer</Type>
 </Property>
 
 <Property name="ReadPct">
@@ -153,8 +153,7 @@ Run random IO test. </Description>
 	#dim tSC as %Status = $$$OK
 	#dim directory,db as %String
 	#dim h,date,time as %String
-	#dim i,batch,maxBlock,currentJobs,IOPS as %Integer
-	#dim respTime as %Double
+	#dim i,batch,maxBlock,currentJobs as %Integer
 	
 	try {
 		//Normalize directory
@@ -230,29 +229,29 @@ Run random IO test. </Description>
 				}
 			}
 				
-			write !,"Starting "_pProcesses_" processes for RanIO job number ",$JOB," now!"
+			write !,"Starting "_pProcesses_" processes for RanIO job number ",$JOB
 			//Start all jobs
 			set ^PerfTools.RanIO("RUNSTATUS")=$$$OK
 				
 			write !,"To terminate run:  do ##class(PerfTools.RanIO).Stop()"
 			write !,"Waiting to finish."
 			//Loop while background jobs are running
-			set timer=3
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
-				if timer>2 set timer = 0 write "."
-				hang 10
+				if timer>29 set timer = 0 write "."
+				hang 1
 				set timer = timer + 1
 			} while currentJobs>0
 						
 			write !,"Random IO background jobs finished for parent ",$JOB
 				
-			//Get average response time
-			set respTime=..GetAverageResponseTime(batch)
-			set IOPS=..GetTotalIOPS(batch)
+			//Get totals
+			set RPS=..GetTotalReadsPerSec(batch)
+			set WPS=..GetTotalWritesPerSec(batch)
 
-			write !,"RanIO job ",$JOB,"'s ",pProcesses_" processes average response time = "_respTime_"ms"
-			write !,"Calculated IOPS for RanIO job ",$JOB," = "_$number(IOPS,0)
+			write !,"RanIO job ",$JOB,"'s ",pProcesses_" processes total reads/s = "_RPS
+			write !,"   and total writes/s = "_WPS
 
 		} else {
 			write !,"ERROR: Directory not valid. See below for parameters."
@@ -281,7 +280,7 @@ Run random IO test. </Description>
 	
 	#dim db as %String
 	#dim i,numGlobals,total,index,count as %Integer
-	#dim startTime,endTime,respTime,elapseTime as %String
+	#dim startTime,endTime,elapseTime as %String
 	
 	try {
 		set home = $NAMESPACE
@@ -297,10 +296,9 @@ Run random IO test. </Description>
 			//Exit wait loop when status is ok
 			quit:^[home]PerfTools.RanIO("RUNSTATUS")=$$$OK
 		}
-		
+
 		set reads = 0
         set writes = 0
-		set total = 0
 
 		set numGlobals = ^RanWriteGlobalCount
 
@@ -339,11 +337,8 @@ Run random IO test. </Description>
     	    //hang pHang/1000  // Input is in milliseconds, hang in seconds
 		    d $zu(136,27,pHang*1000000)  // Input is in milliseconds, $zu command in nanoseconds
 		}
-        set total = reads+writes
 		set endTime=$ztimestamp
 		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
-		set respTime=(elapseTime/total)*1000
-		set respTime=$number(respTime,..#TIMEDECIMAL)
 		
 		zn home
 
@@ -357,10 +352,10 @@ Run random IO test. </Description>
 		set tObj.Namespace=pNamespace
 		set tObj.Reads=reads
         set tObj.Writes=writes
+		set tObj.ReadsPerSec=reads/elapseTime
+		set tObj.WritesPerSec=writes/elapseTime
 		set tObj.ProcTime=elapseTime
         set tObj.Processes=pNumProcesses
-		set tObj.IOPS=(reads+writes)/elapseTime
-		set tObj.ResponseTime=respTime
 		set tObj.ReadPct=pReadPct
 		
 		$$$TOE(tSC,tObj.%Save())
@@ -401,9 +396,11 @@ SQL Query returns summary </Description>
 <SqlQuery>	SELECT RunDate,RunTime,Database,Namespace,
 	{fn ROUND(SUM(Reads),0)} As Reads,
 	{fn ROUND(SUM(Writes),0)} As Writes,
-	Processes,ReadPct,
-	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
-	{fn ROUND(SUM(IOPS),0)} As IOPS
+	{fn ROUND(SUM(ReadsPerSec),0)} As "ReadsPS",
+	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
+	{fn ROUND(STDDEV_POP(Reads)/AVG(Reads),3)} As "StdDevR",
+	{fn ROUND(STDDEV_POP(Writes)/AVG(Writes),3)} As "StdDevW",
+	Processes,ReadPct
 	FROM PerfTools.RanIO
 	GROUP BY Batch</SqlQuery>
 </Query>
@@ -507,28 +504,7 @@ Get full directory filename for export summary txt file.</Description>
 ]]></Implementation>
 </Method>
 
-<Method name="GetAverageResponseTime">
-<Description>
-Return average response time for specified batch run</Description>
-<ClassMethod>1</ClassMethod>
-<FormalSpec>pBatch:%Integer</FormalSpec>
-<ReturnType>%Double</ReturnType>
-<Implementation><![CDATA[
-	#dim avgTime as %Double = 0
-	
-	//Get average response time
-	&sql(SELECT AVG(ResponseTime) 
-		INTO :avgTime
-		FROM PerfTools.RanIO
-		WHERE Batch=:pBatch)
-	
-	set avgTime=$number(avgTime,..#TIMEDECIMAL)	
-	
-	quit avgTime
-]]></Implementation>
-</Method>
-
-<Method name="GetTotalIOPS">
+<Method name="GetTotalReadsPerSec">
 <Description>
 Return total IOPS for specified batch run</Description>
 <ClassMethod>1</ClassMethod>
@@ -537,8 +513,25 @@ Return total IOPS for specified batch run</Description>
 <Implementation><![CDATA[
 	#dim total as %Integer = 0
 	
-	//Get total IOPS 
-	&sql(SELECT SUM(IOPS) 
+	//Get total RPS 
+	&sql(SELECT SUM(ReadsPerSec) 
+		INTO :total
+		FROM PerfTools.RanIO
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
+<Method name="GetTotalWritesPerSec">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total WPS 
+	&sql(SELECT SUM(WritesPerSec) 
 		INTO :total
 		FROM PerfTools.RanIO
 		WHERE Batch=:pBatch)
@@ -720,11 +713,11 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 			}
 
 			//Loop while background jobs are running
-			set timer=6
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
-				if timer>5 set timer = 0 write "."
-				hang 10
+				if timer>29 set timer = 0 write "."
+				hang 1
 				set timer = timer + 1
 			} while currentJobs>0
 
@@ -812,11 +805,11 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 			}
 
 			//Loop while background jobs are running
-			set timer=6
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
-				if timer>5 set timer = 0 write "."
-				hang 10
+				if timer>29 set timer = 0 write "."
+				hang 1
 				set timer = timer + 1
 			} while currentJobs>0
 
@@ -1180,13 +1173,13 @@ Delete all RanIO data</Description>
 <Value>Writes</Value>
 </Value>
 <Value name="11">
-<Value>ProcTime</Value>
+<Value>ReadsPerSec</Value>
 </Value>
 <Value name="12">
-<Value>ResponseTime</Value>
+<Value>WritesPerSec</Value>
 </Value>
 <Value name="13">
-<Value>IOPS</Value>
+<Value>ProcTime</Value>
 </Value>
 <Value name="14">
 <Value>ReadPct</Value>
@@ -1199,50 +1192,6 @@ Delete all RanIO data</Description>
 <Property name="%%ID">
 <Selectivity>1</Selectivity>
 <AverageFieldSize>3</AverageFieldSize>
-</Property>
-<Property name="Batch">
-<Selectivity>50.0000%</Selectivity>
-<AverageFieldSize>3</AverageFieldSize>
-</Property>
-<Property name="Database">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>21</AverageFieldSize>
-</Property>
-<Property name="IOPS">
-<Selectivity>10.0000%</Selectivity>
-<AverageFieldSize>5</AverageFieldSize>
-</Property>
-<Property name="Job">
-<Selectivity>20.0000%</Selectivity>
-<AverageFieldSize>3</AverageFieldSize>
-</Property>
-<Property name="ProcTime">
-<Selectivity>10.0000%</Selectivity>
-<AverageFieldSize>8</AverageFieldSize>
-</Property>
-<Property name="Processes">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>2</AverageFieldSize>
-</Property>
-<Property name="Reads">
-<Selectivity>10.0000%</Selectivity>
-<AverageFieldSize>5</AverageFieldSize>
-</Property>
-<Property name="ResponseTime">
-<Selectivity>33.3333%</Selectivity>
-<AverageFieldSize>4</AverageFieldSize>
-</Property>
-<Property name="RunDate">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>5</AverageFieldSize>
-</Property>
-<Property name="RunTime">
-<Selectivity>10.0000%</Selectivity>
-<AverageFieldSize>8</AverageFieldSize>
-</Property>
-<Property name="Writes">
-<Selectivity>100.0000%</Selectivity>
-<AverageFieldSize>2</AverageFieldSize>
 </Property>
 <SQLMap name="IDKEY">
 <BlockCount>-4</BlockCount>

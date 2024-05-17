@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2023.1 (Build 207U)" ts="2023-07-10 18:21:14">
+<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for ARM64 Containers) 2024.1 (Build 263U)" ts="2024-05-03 20:11:25">
 <Class name="PerfTools.RanRead">
 <Description>
 This IRIS Data Platform tool persists random read storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanRead).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>66651,59531.951612847</TimeChanged>
+<TimeChanged>66963,72343.020428592</TimeChanged>
 <TimeCreated>64054,57617.929379</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -55,6 +55,12 @@ Database directory used for the random read test</Description>
 <Type>%String</Type>
 </Property>
 
+<Property name="Namespace">
+<Description>
+Namespace used for the random write test</Description>
+<Type>%String</Type>
+</Property>
+
 <Property name="Processes">
 <Description>
 Number of processes</Description>
@@ -67,9 +73,27 @@ Job number</Description>
 <Type>%Integer</Type>
 </Property>
 
-<Property name="Iterations">
+<Property name="Reads">
 <Description>
-Number of iterations</Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="Writes">
+<Description>
+Number of writes</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="ReadsPerSec">
+<Description>
+Number of reads</Description>
+<Type>%Integer</Type>
+</Property>
+
+<Property name="WritesPerSec">
+<Description>
+Number of writes</Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -79,15 +103,9 @@ Worker job runtime</Description>
 <Type>%Time</Type>
 </Property>
 
-<Property name="ResponseTime">
+<Property name="ReadPct">
 <Description>
-Response Time in milliseconds</Description>
-<Type>%String</Type>
-</Property>
-
-<Property name="IOPS">
-<Description>
-Calculated IOPS </Description>
+Read pct</Description>
 <Type>%Integer</Type>
 </Property>
 
@@ -136,6 +154,22 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 		//Check if database exists
 		if ..IsValidDatabaseDir(directory)  {
 			
+			set return = $NAMESPACE
+			zn "%SYS"
+
+			// Find the DB associated with the directory
+			set Status=##Class(Config.Databases).DatabasesByDirectory("",directory,.dblist)
+			if '$$$ISOK(Status) {
+				write !,"Error="_$SYSTEM.Status.GetErrorText(Status)
+				return
+			}
+
+			//Convert database name to UPPER case
+			set namespace=$zconvert(dblist,"U")
+			set namespace=$zstrip(namespace,"<>WPC")
+
+			zn return
+
 			//Get database properties
 			set maxBlock=..GetBlockSize(directory)
 			
@@ -154,7 +188,7 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 			for i=1:1:pProcesses {
 				//Job off separate processes to perform random read test
 				set pre = $ZCHILD
-				job ..RanReadJob(date,startTime,batch,directory,pProcesses,pRunTime,maxBlock,i)
+				job ..RanReadJob(date,startTime,batch,directory,namespace,pProcesses,pRunTime,maxBlock,i)
 				set post = $ZCHILD
 				if (pre'=post) {
 					set ^PerfTools.RanRead("JOBLIST",$j,i)=post
@@ -169,21 +203,20 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 			write !,"To terminate run:  do ##class(PerfTools.RanRead).Stop()"
 			write !,"Waiting to finish."
 			//Loop while background jobs are running
+			set timer=0
 			do {
 				set currentJobs=..CountJobs()
+				if timer>29 set timer = 0 write "."
 				hang 1
-				write "."
-				
+				set timer = timer + 1
 			} while currentJobs>0
-						
+												
 			write !,"Random read background jobs finished for parent ",$JOB
 				
 			//Get average response time
-			set respTime=..GetAverageResponseTime(batch)
-			set IOPS=..GetTotalIOPS(batch)
-	
-			write !,"RanRead job ",$JOB,"'s ",pProcesses_" processes average response time = "_respTime_"ms"
-			write !,"Calculated IOPS for RanRead job ",$JOB," = "_$number(IOPS,0)
+			set RPS=..GetTotalReadsPerSec(batch)
+
+			write !,"RanRead job ",$JOB,"'s ",pProcesses_" processes total reads/s = "_RPS
 
 		} else {
 			write !,"ERROR: Directory not valid. See below for parameters."
@@ -206,13 +239,13 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 
 <Method name="RanReadJob">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pProcesses:%Integer,pRunTime:%Integer,pMaxBlocks:%Integer,pJobNum:%Integer</FormalSpec>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pNamespace:%String,pNumProcesses:%Integer,pRunTime:%Integer,pMaxBlocks:%Integer,pJobNum:%Integer</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
 	
 	#dim db as %String
 	#dim i as %Integer
-	#dim startTime,endTime,respTime,elapseTime as %String
+	#dim startTime,endTime,elapseTime as %String
 	
 	try {
 		//Add prefix to database directory 
@@ -228,7 +261,7 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 			quit:^PerfTools.RanRead("RUNSTATUS")=$$$OK
 		}
 		
-		set total = 0
+		set reads = 0
 		set pIterations = 500
 
 		set start = $p(startTime,",",2)
@@ -243,14 +276,12 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 				View pBlockNum
 				close 63
 			}
-			set total = total + pIterations
+			set reads = reads + pIterations
 			//Exit loop if time is up
 			quit:($p($ztimestamp,",",2) > end)
 		}
 		set endTime=$ztimestamp
 		set elapseTime=$p(endTime,",",2)-$p(startTime,",",2)
-		set respTime=(elapseTime/total)*1000
-		set respTime=$number(respTime,..#TIMEDECIMAL)
 		
 		//Save job info
 		set tObj=..%New()
@@ -259,11 +290,12 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 		set tObj.Batch=pBatch
 		set tObj.Job=pJobNum
 		set tObj.Database=pDirectory
-		set tObj.Iterations=total
+		set tObj.Namespace=pNamespace
+		set tObj.Reads=reads
+		set tObj.ReadsPerSec=reads/elapseTime
 		set tObj.ProcTime=elapseTime
-		set tObj.Processes=pProcesses
-		set tObj.ResponseTime=respTime
-		set tObj.IOPS=total/elapseTime
+        set tObj.Processes=pNumProcesses
+		set tObj.ReadPct=100
 		
 		$$$TOE(tSC,tObj.%Save())
 			
@@ -300,9 +332,14 @@ Get database block size</Description>
 <Description>
 SQL Query returns summary </Description>
 <Type>%SQLQuery</Type>
-<SqlQuery>	SELECT RunDate,RunTime,Database,Iterations,Processes,
-	{fn ROUND(AVG(ResponseTime),2)} As ResponseTime,
-	{fn ROUND(SUM(IOPS),0)} As IOPS
+<SqlQuery>	SELECT RunDate,RunTime,Database,Namespace,
+	{fn ROUND(SUM(Reads),0)} As Reads,
+	{fn ROUND(SUM(Writes),0)} As Writes,
+	{fn ROUND(SUM(ReadsPerSec),0)} As "ReadsPS",
+	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
+	{fn ROUND(STDDEV_POP(Reads)/AVG(Reads),3)} As "StdDevR",
+	{fn ROUND(STDDEV_POP(Writes),3)} As "StdDevW",  
+	Processes,ReadPct
 	FROM PerfTools.RanRead
 	GROUP BY Batch</SqlQuery>
 </Query>
@@ -406,28 +443,7 @@ Get full directory filename for export summary txt file.</Description>
 ]]></Implementation>
 </Method>
 
-<Method name="GetAverageResponseTime">
-<Description>
-Return average response time for specified batch run</Description>
-<ClassMethod>1</ClassMethod>
-<FormalSpec>pBatch:%Integer</FormalSpec>
-<ReturnType>%Double</ReturnType>
-<Implementation><![CDATA[
-	#dim avgTime as %Double = 0
-	
-	//Get average response time
-	&sql(SELECT AVG(ResponseTime) 
-		INTO :avgTime
-		FROM PerfTools.RanRead
-		WHERE Batch=:pBatch)
-	
-	set avgTime=$number(avgTime,..#TIMEDECIMAL)	
-	
-	quit avgTime
-]]></Implementation>
-</Method>
-
-<Method name="GetTotalIOPS">
+<Method name="GetTotalReadsPerSec">
 <Description>
 Return total IOPS for specified batch run</Description>
 <ClassMethod>1</ClassMethod>
@@ -436,8 +452,8 @@ Return total IOPS for specified batch run</Description>
 <Implementation><![CDATA[
 	#dim total as %Integer = 0
 	
-	//Get total IOPS 
-	&sql(SELECT SUM(IOPS) 
+	//Get total RPS 
+	&sql(SELECT SUM(ReadsPerSec) 
 		INTO :total
 		FROM PerfTools.RanRead
 		WHERE Batch=:pBatch)
@@ -740,6 +756,7 @@ Delete all RanRead data</Description>
 <IdLocation>^PerfTools.RanReadD</IdLocation>
 <IndexLocation>^PerfTools.RanReadI</IndexLocation>
 <StreamLocation>^PerfTools.RanReadS</StreamLocation>
+<ExtentSize>10</ExtentSize>
 <Data name="RanReadDefaultData">
 <Value name="1">
 <Value>%%CLASSNAME</Value>
@@ -751,39 +768,50 @@ Delete all RanRead data</Description>
 <Value>RunTime</Value>
 </Value>
 <Value name="4">
-<Value>DatabasePath</Value>
-</Value>
-<Value name="5">
-<Value>Processes</Value>
-</Value>
-<Value name="6">
-<Value>Iterations</Value>
-</Value>
-<Value name="7">
-<Value>DatabaseDirectory</Value>
-</Value>
-<Value name="8">
-<Value>ResponseTime</Value>
-</Value>
-<Value name="9">
-<Value>RunID</Value>
-</Value>
-<Value name="10">
 <Value>Batch</Value>
 </Value>
-<Value name="11">
+<Value name="5">
 <Value>Database</Value>
 </Value>
-<Value name="12">
+<Value name="6">
+<Value>Namespace</Value>
+</Value>
+<Value name="7">
+<Value>Processes</Value>
+</Value>
+<Value name="8">
 <Value>Job</Value>
 </Value>
-<Value name="13">
-<Value>IOPS</Value>
+<Value name="9">
+<Value>Reads</Value>
 </Value>
-<Value name="14">
+<Value name="10">
+<Value>Writes</Value>
+</Value>
+<Value name="11">
+<Value>ReadsPerSec</Value>
+</Value>
+<Value name="12">
+<Value>WritesPerSec</Value>
+</Value>
+<Value name="13">
 <Value>ProcTime</Value>
 </Value>
+<Value name="14">
+<Value>ReadPct</Value>
+</Value>
 </Data>
+<Property name="%%CLASSNAME">
+<Selectivity>100.0000%</Selectivity>
+<AverageFieldSize>2</AverageFieldSize>
+</Property>
+<Property name="%%ID">
+<Selectivity>1</Selectivity>
+<AverageFieldSize>3</AverageFieldSize>
+</Property>
+<SQLMap name="IDKEY">
+<BlockCount>-4</BlockCount>
+</SQLMap>
 </Storage>
 </Class>
 </Export>

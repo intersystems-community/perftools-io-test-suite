@@ -1,6 +1,8 @@
 ### Purpose
 
-This set of tools (RanRead, RanWrite, and the combined RanIO) is used to generate random read and write events within a database (or pair of databases) to test Input/Output operations per second (IOPS). They can be used either in conjunction or separately to test IO hardware capacity, validate target IOPS, and ensure acceptable disk response times are sustained. Results gathered from the IO tests will vary from configuration to configuration based on the IO sub-system. Before running these tests ensure corresponding operating system and storage level monitoring are configured to capture IO performance metrics for later analysis. The suggested method is by running the System Performance tool that comes bundled within IRIS. Please note that this is an update to a previous release, which can be found [here](https://community.intersystems.com/post/random-read-io-storage-performance-tool).
+This set of tools (RanRead, RanWrite, and the combined RanIO) is used to generate random read and write events within a database (or pair of databases) to test the IO speed of IRIS running on a specified hardware setup. While Read operations can be measured in the usual Input/Output operations per second (IOPS) since they're direct disk reads, write events are sent to the database and thus their physical writes are managed by IRIS's write daemon.  
+
+Results gathered from the IO tests will vary from configuration to configuration based on the IO sub-system. Before running these tests, ensure corresponding operating system and storage level monitoring are configured to capture IO performance metrics for later analysis. The suggested method is by running the System Performance tool that comes bundled within IRIS. Please note that this is an update to a previous release, which can be found [here](https://community.intersystems.com/post/random-read-io-storage-performance-tool).
 
 <!--break-->
 
@@ -184,6 +186,8 @@ To export the result set to a comma delimited text file (csv) run the following:
 
 Exporting summary of all random read statistics to /ISC/tests/TMP/PerfToolsRanRead_20221023-1408.txt  
 Done.
+
+The output of all three tools are the same, but fields that are irrelevant, such as writes when using RanRead, will be left blank.
 
 IMPORTANT NOTE: These tools have no way to measure disk writes. Disk reads are measured on a 1:1 basis, but all writes from RanWrite and RanIO are to the database in memory. As such, the writes are handled by the Write Daemon as always, and the Write Daemon is very efficient. If multiple adjacent blocks on disk are "dirty" (i.e. have been modified since the last Write Daemon cycle), they may be written in a single IOP. Up to 16 blocks can be written together. Due to this, the write IOPS reported by RanWrite and RanIO can be significantly different than the write IOPS reported by mgstat or iostat. This is to be expected, and is part of why the performance should be measured by external tools in addition to the reporting from these tools.
 
