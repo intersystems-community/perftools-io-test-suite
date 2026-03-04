@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-03 14:30:31">
+<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-04 09:45:30">
 <Class name="PerfTools.RanIO">
 <Description>
 This IRIS Data Platform tool persists random read/write storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanIO).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>67632,51670.6220403</TimeChanged>
+<TimeChanged>67633,34977.3759943</TimeChanged>
 <TimeCreated>66588,57334.106888042</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -154,7 +154,7 @@ Display help</Description>
 <Description>
 Run random IO test. </Description>
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Float=2,pReadPct:%Integer=50</FormalSpec>
+<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Double=2,pReadPct:%Integer=50</FormalSpec>
 <Implementation><![CDATA[
 	
 	#dim tSC as %Status = $$$OK
@@ -335,8 +335,8 @@ Run random IO test. </Description>
 					set var = "^RanWriteGlobal"_global_"("_index_")"
 					set @var = "Updated by job "_$JOB_" at "_$ztime($piece($h,",",2))_" on "_$zdate(+$h) ///_" "_loremipsum
 				}
-   	    		tcommit
 				set writes = writes + pTransactionLength
+   	    		tcommit
 			}
 			//Exit loop if time is up
 			quit:($p($ztimestamp,",",2) > end)
@@ -405,8 +405,12 @@ SQL Query returns summary </Description>
 	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
 	{fn ROUND(STDDEV_SAMP(Reads),3)} As "StdDevR",
 	{fn ROUND(STDDEV_SAMP(Writes),3)} As "StdDevW",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec),3)} As "StdDevRPS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec),3)} As "StdDevWPS",	
 	{fn ROUND(STDDEV_SAMP(Reads)/AVG(Reads),3)} As "CVReads",
 	{fn ROUND(STDDEV_SAMP(Writes)/AVG(Writes),3)} As "CVWrites",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec)/AVG(ReadsPerSec),3)} As "CVReadsPerS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec)/AVG(WritesPerSec),3)} As "CVWritesPerS",
 	Processes,ReadPct
 	FROM PerfTools.RanIO
 	GROUP BY Batch</SqlQuery>
