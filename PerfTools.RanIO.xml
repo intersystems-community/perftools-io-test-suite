@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-04 09:45:30">
+<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-05 13:35:11">
 <Class name="PerfTools.RanIO">
 <Description>
 This IRIS Data Platform tool persists random read/write storage IO performance statistics for analysis.
@@ -10,7 +10,7 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanIO).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>67633,34977.3759943</TimeChanged>
+<TimeChanged>67634,48837.6870196</TimeChanged>
 <TimeCreated>66588,57334.106888042</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
@@ -125,28 +125,35 @@ Display help</Description>
 	
 	// write display title
 	set str=" - "
+	set spc ="   "
 	write !,"do ##class(PerfTools.RanIO).Setup(Directory,DatabaseName,SizeGB,LogLevel)"
-	write !,str_"Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
+	write !,str_"Creates database and namespace with the same name. The log level must be" 
+	write !,spc_"in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
 	write !,"do ##class(PerfTools.RanIO).CreateGlobals(Directory,NumGlobals,NumSubscripts)"
-	write !,str_"Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1," 
-	write !,str_"^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each."
+	write !,str_"Creates the requested numbered subscripts (1-N) under the globals"
+	write !,spc_"^RanWriteGlobal1, ^RanWriteGlobal2, etc."
+	write !,spc_"Default 5 globals, 1M subscripts each."
 	write !,"do ##class(PerfTools.RanIO).AddGlobals(Directory,NumGlobals,NumSubscripts)"
 	write !,str_"Creates more Globals if needed after the initial creation is done." 
-	write !,str_"NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1"
+	write !,spc_"NumSubscripts is optional in this case, since by default it will take the"
+	write !,spc_"size of ^RanWriteGlobal1"
 	write !,"do ##class(PerfTools.RanIO).CountSubscripts(Directory)"
-	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the"
+	write !,spc_"indicated directory."
 	write !,"do ##class(PerfTools.RanIO).GetSizes(Directory)"
-	write !,str_"Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory."
-	write !,"do ##class(PerfTools.RanIO).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms),PctReads)"
+	write !,str_"Outputs as CSV the number of globals and number of subscripts in"
+	write !,spc_"^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanIO).Run(Directory,NumProcs,RunTime (sec),"
+	write !,"                                TransactionLength,HangTime (ms),PctReads)"
 	write !,str_"Run the combined read/write IO test."
 	write !,"do ##class(PerfTools.RanIO).Stop()"
 	write !,str_"Terminates all worker jobs and then the driver."
 	write !,"do ##class(PerfTools.RanIO).Reset()"
 	write !,str_"Deletes statistics of prior runs."
-	write !,"do ##class(PerfTools.RanIO).Purge(Directory)"
+	write !,"do ##class(PerfTools.RanIO).Purge(Directory,dbName)"
 	write !,str_"Deletes namespace and database of the same name."
 	write !,"do ##class(PerfTools.RanIO).Export(Directory)"
-	write !,str_"Exports a summary of all random read test history to comma delimited text file."
+	write !,str_"Exports a summary of all test history to a comma delimited text file."
 ]]></Implementation>
 </Method>
 
@@ -220,7 +227,7 @@ Run random IO test. </Description>
 			set batch=$increment(^PerfTools.RanIO("BATCH"))
 			
 			write !,"RanIO process ",$JOB," creating "_pProcesses_" worker processes in the background."	
-			write !, "Read I/O = "_pReadPct_"%"
+			write !, "Target Read I/O = "_pReadPct_"%"
 				
 			//Set run flag to zero - don't start running until all jobs created
 			set ^PerfTools.RanIO("RUNSTATUS")=0
@@ -257,9 +264,17 @@ Run random IO test. </Description>
 			//Get totals
 			set RPS=..GetTotalReadsPerSec(batch)
 			set WPS=..GetTotalWritesPerSec(batch)
+			set READS=..GetTotalReads(batch)
+			set WRITES=..GetTotalWrites(batch)
+			set IOS=(READS + WRITES)
+
 
 			write !,"RanIO job ",$JOB,"'s ",pProcesses_" processes total reads/s = "_RPS
 			write !,"   and total writes/s = "_WPS
+
+			// Check whether the run achieved the target read percent
+			write !,"Actual read I/O = "_$NORMALIZE(((READS/IOS) * 100.0),2)_"%"
+			write !, "Actual write I/O = "_$NORMALIZE(((WRITES/IOS) * 100.0),2)_"%"
 
 		} else {
 			write !,"ERROR: Directory not valid. See below for parameters."
@@ -526,6 +541,40 @@ Return total IOPS for specified batch run</Description>
 	
 	//Get total RPS 
 	&sql(SELECT SUM(ReadsPerSec) 
+		INTO :total
+		FROM PerfTools.RanIO
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
+<Method name="GetTotalReads">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total reads for all jobs in this batch
+	&sql(SELECT SUM(Reads) 
+		INTO :total
+		FROM PerfTools.RanIO
+		WHERE Batch=:pBatch)
+		
+	quit total
+]]></Implementation>
+</Method>
+
+<Method name="GetTotalWrites">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pBatch:%Integer</FormalSpec>
+<ReturnType>%Double</ReturnType>
+<Implementation><![CDATA[
+	#dim total as %Integer = 0
+	
+	//Get total writes for all jobs in this batch
+	&sql(SELECT SUM(Writes) 
 		INTO :total
 		FROM PerfTools.RanIO
 		WHERE Batch=:pBatch)
