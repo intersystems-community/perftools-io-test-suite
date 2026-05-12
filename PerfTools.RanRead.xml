@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for ARM64 Containers) 2024.1 (Build 263U)" ts="2024-05-03 20:11:25">
+<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-18 11:29:30">
 <Class name="PerfTools.RanRead">
 <Description>
 This IRIS Data Platform tool persists random read storage IO performance statistics for analysis.
@@ -10,15 +10,22 @@ This utility is designed to run in USER.
 For more info run:  do ##class(PerfTools.RanRead).Help()</Description>
 <IncludeCode>%occInclude</IncludeCode>
 <Super>%Persistent</Super>
-<TimeChanged>66963,72343.020428592</TimeChanged>
-<TimeCreated>64054,57617.929379</TimeCreated>
+<TimeChanged>67647,38115.0702747</TimeChanged>
+<TimeCreated>67647,38115.0702747</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
 <Default>PerfToolsRanRead_</Default>
 </Parameter>
 
+<UDLText name="T">
+<Content><![CDATA[
+// 44 = comma, 9 = <HT>
+
+]]></Content>
+</UDLText>
+
 <Parameter name="FILEEXTENSION">
-<Default>.txt</Default>
+<Default>.csv</Default>
 </Parameter>
 
 <Parameter name="DELIM">
@@ -118,18 +125,35 @@ Display help</Description>
 	
 	// write display title
 	set str=" - "
+	set spc ="   "
 	write !,"do ##class(PerfTools.RanRead).Setup(Directory,DatabaseName,SizeGB,LogLevel)"
-	write !,str_"Creates database and namespace with the same name. The log level must be in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
-	write !,"do ##class(PerfTools.RanRead).Run(Directory,Processes,RunTime in seconds)"
-	write !,str_"Run the random read IO test."
+	write !,str_"Creates database and namespace with the same name. The log level must be" 
+	write !,spc_"in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
+	write !,"do ##class(PerfTools.RanRead).CreateGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates the requested numbered subscripts (1-N) under the globals"
+	write !,spc_"^RanReadGlobal1, ^RanReadGlobal2, etc."
+	write !,spc_"Default 5 globals, 1M subscripts each."
+	write !,"do ##class(PerfTools.RanRead).AddGlobals(Directory,NumGlobals,NumSubscripts)"
+	write !,str_"Creates more Globals if needed after the initial creation is done." 
+	write !,spc_"NumSubscripts is optional in this case, since by default it will take the"
+	write !,spc_"size of ^RanReadGlobal1"
+	write !,"do ##class(PerfTools.RanRead).CountSubscripts(Directory)"
+	write !,str_"Counts (via $order) the number of subscripts in ^RanReadGlobal* in the"
+	write !,spc_"indicated directory."
+	write !,"do ##class(PerfTools.RanRead).GetSizes(Directory)"
+	write !,str_"Outputs as CSV the number of globals and number of subscripts in"
+	write !,spc_"^RanReadGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanRead).Run(Directory,NumProcs,RunTime (sec),"
+	write !,"                                TransactionLength,HangTime (ms),PctReads)"
+	write !,str_"Run the combined read/write IO test."
 	write !,"do ##class(PerfTools.RanRead).Stop()"
-	write !,str_"Terminates all background jobs."
+	write !,str_"Terminates all worker jobs and then the driver."
 	write !,"do ##class(PerfTools.RanRead).Reset()"
 	write !,str_"Deletes statistics of prior runs."
-	write !,"do ##class(PerfTools.RanRead).Purge(Directory)"
+	write !,"do ##class(PerfTools.RanRead).Purge(Directory,dbName)"
 	write !,str_"Deletes namespace and database of the same name."
 	write !,"do ##class(PerfTools.RanRead).Export(Directory)"
-	write !,str_"Exports a summary of all random read test history to comma delimited text file."
+	write !,str_"Exports a summary of all test history to a comma delimited text file."
 ]]></Implementation>
 </Method>
 
@@ -192,7 +216,7 @@ Prompt user for database path, processes and iterations if not passed in.</Descr
 				set post = $ZCHILD
 				if (pre'=post) {
 					set ^PerfTools.RanRead("JOBLIST",$j,i)=post
-					//w !,"  Prepped RanWriteJob ",$ZCHILD," for parent ",$JOB," as element",i										
+					//w !,"  Prepped RanReadJob ",$ZCHILD," for parent ",$JOB," as element",i										
 				}
 			}
 				
@@ -337,8 +361,14 @@ SQL Query returns summary </Description>
 	{fn ROUND(SUM(Writes),0)} As Writes,
 	{fn ROUND(SUM(ReadsPerSec),0)} As "ReadsPS",
 	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
-	{fn ROUND(STDDEV_POP(Reads)/AVG(Reads),3)} As "StdDevR",
-	{fn ROUND(STDDEV_POP(Writes),3)} As "StdDevW",  
+	{fn ROUND(STDDEV_SAMP(Reads),3)} As "StdDevR",
+	{fn ROUND(STDDEV_SAMP(Writes),3)} As "StdDevW",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec),3)} As "StdDevRPS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec),3)} As "StdDevWPS",	
+	{fn ROUND(STDDEV_SAMP(Reads)/AVG(Reads),3)} As "CVReads",
+	{fn ROUND(STDDEV_SAMP(Writes)/AVG(Writes),3)} As "CVWrites",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec)/AVG(ReadsPerSec),3)} As "CVReadsPerS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec)/AVG(WritesPerSec),3)} As "CVWritesPerS",
 	Processes,ReadPct
 	FROM PerfTools.RanRead
 	GROUP BY Batch</SqlQuery>

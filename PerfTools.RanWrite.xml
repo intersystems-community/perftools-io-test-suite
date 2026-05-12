@@ -1,22 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Export generator="IRIS" version="26" zv="IRIS for UNIX (Ubuntu Server LTS for ARM64 Containers) 2024.1 (Build 263U)" ts="2024-05-03 20:11:39">
+<Export generator="IRIS" version="26" zv="IRIS for Windows (x86-64) 2026.1.0L (Build 193U)" ts="2026-03-18 11:29:47">
 <Class name="PerfTools.RanWrite">
 <Description><![CDATA[
 Random write test
 
 There is a tstart and tcommit around each set, so to test journal synchs on ECP this can be run on an application server. The IO will still be on the DB server, but ECP and (high) journal synchs should be tested.
  
-ranwrite uses very little CPU (<1%) so could be run with RANREAD for a r/w smoke test. Adjust the pacing for the expected load.]]></Description>
+ranwrite uses very little CPU (<1%) so could be run with RanRead for a r/w smoke test. Adjust the pacing for the expected load.]]></Description>
 <Super>%Persistent</Super>
-<TimeChanged>66963,72584.178341343</TimeChanged>
-<TimeCreated>65488,66744.147036</TimeCreated>
+<TimeChanged>67647,38082.2682242</TimeChanged>
+<TimeCreated>67647,38082.2682242</TimeCreated>
 
 <Parameter name="EXPORTFILENAME">
 <Default>PerfToolsRanWrite_</Default>
 </Parameter>
 
+<UDLText name="T">
+<Content><![CDATA[
+// 44 = comma, 9 = <HT>
+
+]]></Content>
+</UDLText>
+
 <Parameter name="FILEEXTENSION">
-<Default>.txt</Default>
+<Default>.csv</Default>
 </Parameter>
 
 <Parameter name="DELIM">
@@ -116,28 +123,35 @@ Display help</Description>
 	
 	// write display title
 	set str=" - "
-	write !,"do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName)"
-	write !,str_"Creates database and namespace with the same name."
+	set spc ="   "
+	write !,"do ##class(PerfTools.RanWrite).Setup(Directory,DatabaseName,SizeGB,LogLevel)"
+	write !,str_"Creates database and namespace with the same name. The log level must be" 
+	write !,spc_"in the range of 0 to 3, where 0 is “none” and 3 is “verbose”."
 	write !,"do ##class(PerfTools.RanWrite).CreateGlobals(Directory,NumGlobals,NumSubscripts)"
-	write !,str_"Creates the requested numbered subscripts (1-N) under the globals ^RanWriteGlobal1," 
-	write !,str_"^RanWriteGlobal2, etc. Default 5 globals, 1M subscripts each."
+	write !,str_"Creates the requested numbered subscripts (1-N) under the globals"
+	write !,spc_"^RanWriteGlobal1, ^RanWriteGlobal2, etc."
+	write !,spc_"Default 5 globals, 1M subscripts each."
 	write !,"do ##class(PerfTools.RanWrite).AddGlobals(Directory,NumGlobals,NumSubscripts)"
 	write !,str_"Creates more Globals if needed after the initial creation is done." 
-	write !,str_"NumSubscripts is optional in this case, since by default it will take the size of ^RanWriteGlobal1"
+	write !,spc_"NumSubscripts is optional in this case, since by default it will take the"
+	write !,spc_"size of ^RanWriteGlobal1"
 	write !,"do ##class(PerfTools.RanWrite).CountSubscripts(Directory)"
-	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the indicated directory."
+	write !,str_"Counts (via $order) the number of subscripts in ^RanWriteGlobal* in the"
+	write !,spc_"indicated directory."
 	write !,"do ##class(PerfTools.RanWrite).GetSizes(Directory)"
-	write !,str_"Outputs as CSV the number of globals and number of subscripts in ^RanWriteGlobal* in the indicated directory."
-	write !,"do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),TransactionLength,HangTime (ms))"
-	write !,str_"Run the random write IO test. All parameters other than the directory have defaults."
+	write !,str_"Outputs as CSV the number of globals and number of subscripts in"
+	write !,spc_"^RanWriteGlobal* in the indicated directory."
+	write !,"do ##class(PerfTools.RanWrite).Run(Directory,NumProcs,RunTime (sec),"
+	write !,"                                TransactionLength,HangTime (ms),PctReads)"
+	write !,str_"Run the combined read/write IO test."
 	write !,"do ##class(PerfTools.RanWrite).Stop()"
-	write !,str_"Terminates all background jobs."
+	write !,str_"Terminates all worker jobs and then the driver."
 	write !,"do ##class(PerfTools.RanWrite).Reset()"
 	write !,str_"Deletes statistics of prior runs."
-	write !,"do ##class(PerfTools.RanWrite).Purge(Directory)"
+	write !,"do ##class(PerfTools.RanWrite).Purge(Directory,dbName)"
 	write !,str_"Deletes namespace and database of the same name."
 	write !,"do ##class(PerfTools.RanWrite).Export(Directory)"
-	write !,str_"Exports a summary of all random write test history to comma delimited text file."
+	write !,str_"Exports a summary of all test history to a comma delimited text file."
 ]]></Implementation>
 </Method>
 
@@ -659,7 +673,7 @@ Pre-create a few top-level globals with some number of pre-existing subscripts</
 do ##class(PerfTools.RanWrite).Run(<directory>,<number of procs>,<run time in seconds>,<number of writes per transaction>,<hang time in milliseconds>)
 do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Description>
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Float=2</FormalSpec>
+<FormalSpec>pDirectory:%String="",pProcesses:%Integer=1,pRunTime:%Integer=300,pTransactionLength:%Integer=50,pHang:%Double=2</FormalSpec>
 <Implementation><![CDATA[
 	#dim tSC as %Status = $$$OK
 	#dim directory,db as %String
@@ -782,7 +796,7 @@ do ##class(PerfTools.RanWrite).Run("/ISC/tests/TMP",10,30,50,0.5)]]></Descriptio
 
 <Method name="RanWriteJob">
 <ClassMethod>1</ClassMethod>
-<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pNamespace:%String,pRunTime:%Integer,pTransactionLength:%Integer,pHang:%Float,pJobNum:%Integer,pNumProcesses:%Integer</FormalSpec>
+<FormalSpec>pDate:%Date,pTime:%Time,pBatch:%Integer,pDirectory:%String,pNamespace:%String,pRunTime:%Integer,pTransactionLength:%Integer,pHang:%Double,pJobNum:%Integer,pNumProcesses:%Integer</FormalSpec>
 <ReturnType>%Status</ReturnType>
 <Implementation><![CDATA[
 	
@@ -871,8 +885,14 @@ SQL Query returns summary </Description>
 	{fn ROUND(SUM(Writes),0)} As Writes,
 	{fn ROUND(SUM(ReadsPerSec),0)} As "ReadsPS",
 	{fn ROUND(SUM(WritesPerSec),0)} As "WritesPS",
-	{fn ROUND(STDDEV_POP(Reads),3)} As "StdDevR",
-	{fn ROUND(STDDEV_POP(Writes)/AVG(Writes),3)} As "StdDevW",  
+	{fn ROUND(STDDEV_SAMP(Reads),3)} As "StdDevR",
+	{fn ROUND(STDDEV_SAMP(Writes),3)} As "StdDevW",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec),3)} As "StdDevRPS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec),3)} As "StdDevWPS",	
+	{fn ROUND(STDDEV_SAMP(Reads)/AVG(Reads),3)} As "CVReads",
+	{fn ROUND(STDDEV_SAMP(Writes)/AVG(Writes),3)} As "CVWrites",
+	{fn ROUND(STDDEV_SAMP(ReadsPerSec)/AVG(ReadsPerSec),3)} As "CVReadsPerS",
+	{fn ROUND(STDDEV_SAMP(WritesPerSec)/AVG(WritesPerSec),3)} As "CVWritesPerS",
 	Processes,ReadPct
 	FROM PerfTools.RanWrite
 	GROUP BY Batch</SqlQuery>
